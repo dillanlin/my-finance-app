@@ -201,6 +201,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
             <div class="hero-sub-label">銀行/現金</div>
             <div class="hero-sub-value" id="hw-cash">$0</div>
           </div>
+          <div class="hero-sub-item">
+            <div class="hero-sub-label">本月支出</div>
+            <div class="hero-sub-value" id="hw-month-exp" style="color:#f87171;">$0</div>
+          </div>
         </div>
       </div>
 
@@ -510,8 +514,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
     <div class="form-group">
       <label class="form-label">金額</label>
-      <input type="number" class="form-input" id="exp-amt" placeholder="0" style="font-size:24px;font-weight:700;">
+      <input type="number" class="form-input" id="exp-amt" placeholder="0" style="font-size:28px;font-weight:700;text-align:center;letter-spacing:1px;" oninput="updateExpPreview(this.value)">
     </div>
+    <div id="exp-preview" style="text-align:center;font-size:12px;color:var(--muted,#94a3b8);margin:-6px 0 10px;min-height:16px;"></div>
     <div class="form-group">
       <label class="form-label">類別</label>
       <select class="form-select" id="exp-cat">
@@ -760,6 +765,16 @@ async function fetchAllPrices() {
 }
 
 // ── Expense / income ─────────────────────────────────────
+function updateExpPreview(val){
+  const el=document.getElementById('exp-preview');
+  if(!el) return;
+  const amt=parseFloat(val)||0;
+  if(!amt){el.textContent='';return;}
+  const ym=new Date().toISOString().slice(0,7);
+  const monthTotal=db.expenses.filter(e=>e.amount>0&&e.date.startsWith(ym)).reduce((s,e)=>s+e.amount,0);
+  el.textContent=`本月累計：$${Math.round(monthTotal+amt).toLocaleString()}`;
+}
+
 function addExpense() {
   const amt=parseFloat(document.getElementById('exp-amt').value);
   const cat=document.getElementById('exp-cat').value;
@@ -874,6 +889,10 @@ function renderStats(){
   document.getElementById('hw-net').textContent=fmt(net);
   document.getElementById('hw-stock').textContent=fmt(mkt);
   document.getElementById('hw-cash').textContent=fmt(cash);
+  const ym=new Date().toISOString().slice(0,7);
+  const mExp=db.expenses.filter(e=>e.amount>0&&e.date.startsWith(ym)).reduce((s,e)=>s+e.amount,0);
+  const hwMe=document.getElementById('hw-month-exp');
+  if(hwMe) hwMe.textContent=fmt(mExp);
   updateFIRE();
 }
 
@@ -963,7 +982,7 @@ function renderStockTable(){
   });
   const tbody=document.getElementById('stock-table-body');
   const rows=Object.values(agg);
-  if(!rows.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px;">尚無持股紀錄</td></tr>';return;}
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;font-size:13px;"><div style="font-size:28px;margin-bottom:8px;opacity:.4;">📊</div>尚無持股紀錄<br><span style="font-size:12px;">點下方「新增買入」開始建立</span></td></tr>';return;}
   tbody.innerHTML=rows.sort((a,b)=>b.cost-a.cost).map(s=>{
     const curP=db.prices[s.sym];
     const avg=s.cost/s.shares;
@@ -981,24 +1000,62 @@ function renderStockTable(){
   }).join('');
 }
 
+const CAT_ICONS = {
+  '餐費':'🍜','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊',
+  '住房':'🏠','訂閱':'📱','薪水':'💰','股利':'📈','其他':'📦'
+};
+
 function renderRecentExpenses(){
   const el=document.getElementById('recent-expenses');
-  const recent=[...db.expenses].filter(e=>e.amount>0).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,20);
-  if(!recent.length){el.innerHTML='<div class="empty" style="padding:20px;"><span style="color:var(--muted);font-size:13px;">尚無支出紀錄</span></div>';return;}
-  const catColors={'餐費':'amber','交通':'blue','購物':'purple','娛樂':'blue','醫療':'red','住房':'green','訂閱':'amber','其他':'muted'};
-  el.innerHTML=recent.map(e=>{
-    const color=catColors[e.category]||'muted';
-    return `<div class="list-row">
-      <div class="list-icon" style="background:rgba(${colorToRgb(color)},.15);color:var(--${color});font-size:12px;">${e.category[0]}</div>
-      <div class="list-main">
-        <div class="list-title">${e.category}</div>
-        <div class="list-sub">${e.date}</div>
-      </div>
-      <div class="list-right">
-        <div class="list-value" style="color:var(--red);">-$${e.amount.toLocaleString()}</div>
-      </div>
+  const recent=[...db.expenses].filter(e=>e.amount>0).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30);
+  if(!recent.length){
+    el.innerHTML=`<div style="text-align:center;padding:32px 20px;">
+      <div style="font-size:36px;margin-bottom:10px;opacity:.4;">🧾</div>
+      <div style="font-size:14px;color:var(--muted);">還沒有支出紀錄</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">點上方「記帳支出」開始記錄</div>
     </div>`;
-  }).join('');
+    return;
+  }
+  const catColors={'餐費':'amber','交通':'blue','購物':'purple','娛樂':'blue','醫療':'red','住房':'green','訂閱':'amber','其他':'muted'};
+  // Group by date
+  const byDate={};
+  recent.forEach(e=>{
+    if(!byDate[e.date]) byDate[e.date]=[];
+    byDate[e.date].push(e);
+  });
+  let html='';
+  Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
+    const dayTotal=byDate[date].reduce((s,e)=>s+e.amount,0);
+    const label=formatDateLabel(date);
+    html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px 4px;background:var(--bg3,#334155);">
+      <span style="font-size:12px;font-weight:500;color:var(--muted);">${label}</span>
+      <span style="font-size:12px;color:var(--red);">-$${Math.round(dayTotal).toLocaleString()}</span>
+    </div>`;
+    byDate[date].forEach(e=>{
+      const color=catColors[e.category]||'muted';
+      const icon=CAT_ICONS[e.category]||'📦';
+      html+=`<div class="list-row" style="padding:10px 16px;">
+        <div class="list-icon" style="background:rgba(${colorToRgb(color)},.15);color:var(--${color});font-size:18px;width:38px;height:38px;">${icon}</div>
+        <div class="list-main">
+          <div class="list-title" style="font-size:14px;">${e.category}</div>
+          <div class="list-sub">${e.paymentMethod||''}</div>
+        </div>
+        <div class="list-right">
+          <div class="list-value" style="color:var(--red);font-size:15px;">-$${Math.round(e.amount).toLocaleString()}</div>
+        </div>
+      </div>`;
+    });
+  });
+  el.innerHTML=html;
+}
+
+function formatDateLabel(dateStr){
+  const d=new Date(dateStr);
+  const today=new Date(); today.setHours(0,0,0,0);
+  const yd=new Date(today); yd.setDate(yd.getDate()-1);
+  if(d.toDateString()===today.toDateString()) return '今天';
+  if(d.toDateString()===yd.toDateString()) return '昨天';
+  return `${d.getMonth()+1}月${d.getDate()}日`;
 }
 
 function colorToRgb(c){
@@ -1239,39 +1296,28 @@ async function handleOcrUpload(input) {
 }
 
 async function callClaudeOCR(base64, mediaType) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: base64 }
-          },
-          {
-            type: 'text',
-            text: `這是一張台灣券商股票庫存截圖。請辨識所有持股，以純 JSON 格式回覆，不要有任何其他文字：
+  const prompt = `這是一張台灣券商股票庫存截圖。請辨識所有持股，以純 JSON 格式回覆，不要有任何其他文字：
 [
   {"symbol":"股票代號(只要數字,如2330)","name":"股票名稱","shares":持股數量(數字),"avgPrice":成交均價(數字),"currentPrice":市價或現價(數字,若沒有則null)},
   ...
 ]
-注意：代號只取數字部分（如0050、006208、2330），shares、avgPrice、currentPrice 都要是純數字，不要有逗號。`
-          }
-        ]
-      }]
-    })
+注意：代號只取數字部分（如0050、006208、2330），shares、avgPrice、currentPrice 都要是純數字，不要有逗號。`;
+
+  const endpoint = '/.netlify/functions/ai-proxy';
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: base64, mediaType, prompt })
   });
 
   if(!response.ok) {
-    const err = await response.json();
-    throw new Error(err.error?.message || 'API 錯誤');
+    const err = await response.json().catch(()=>({}));
+    throw new Error(err.error?.message || `HTTP ${response.status}`);
   }
 
   const data = await response.json();
+  if(data.error) throw new Error(data.error.message);
   const text = data.content[0].text.trim();
   const clean = text.replace(/```json|```/g, '').trim();
   return JSON.parse(clean);
