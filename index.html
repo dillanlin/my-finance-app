@@ -346,6 +346,30 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
       <input type="file" id="import-file" hidden accept=".json" onchange="importData(this)">
 
+      <div class="section-title">AI 截圖判讀設定</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div style="font-size:14px;color:var(--muted,#94a3b8);margin-bottom:12px;line-height:1.7;">
+          輸入 Google Gemini API Key，即可使用截圖 AI 自動判讀股票資料。<strong style="color:var(--text,#f1f5f9);">完全免費</strong>，每天 1500 次額度。
+        </div>
+        <div style="margin-bottom:10px;">
+          <label class="form-label">Gemini API Key</label>
+          <div style="display:flex;gap:8px;">
+            <input type="password" class="form-input" id="gemini-key-input" placeholder="AIza..." style="flex:1;font-size:14px;">
+            <button class="btn btn-ghost btn-sm" style="width:60px;flex-shrink:0;" onclick="toggleKeyVis()">顯示</button>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveGeminiKey()" style="margin-bottom:10px;">
+          <i class="fa-solid fa-key"></i> 儲存 Key
+        </button>
+        <div style="background:rgba(59,130,246,.08);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--muted,#94a3b8);line-height:1.7;">
+          📍 免費取得方式：<br>
+          1. 開啟 <strong style="color:var(--blue,#3b82f6);">aistudio.google.com</strong><br>
+          2. 點右上角「Get API key」→「Create API key」<br>
+          3. 複製後貼到上方欄位儲存<br>
+          <span style="color:rgba(148,163,184,.6);">Key 只存在你的手機，不會上傳到任何地方</span>
+        </div>
+      </div>
+
       <div class="section-title">部署說明（加到主畫面）</div>
       <div class="card card-body">
         <div style="font-size:14px;line-height:1.9;color:var(--muted);">
@@ -632,6 +656,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   if(!db.subs) db.subs=[];
   if(!db.budgets) db.budgets={};
+  if(!db.geminiKey) db.geminiKey='';
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
@@ -665,6 +690,7 @@ function switchPage(name, tab) {
   tab.classList.add('active');
   document.getElementById('scroll-area').scrollTop = 0;
   const titles={dashboard:'💰 財富指揮官', stock:'📈 存股管理', cashflow:'💳 記帳', settings:'⚙️ 設定'};
+  if(name==='settings') setTimeout(loadGeminiKeyToInput, 50);
   document.getElementById('header-title').textContent = titles[name]||'';
   if(name==='cashflow') renderExpenseChart();
   if(name==='stock') renderStockChart();
@@ -1187,6 +1213,27 @@ function toast(msg){
 }
 
 
+// ── Gemini Key management ────────────────────────────────
+function saveGeminiKey() {
+  const key = document.getElementById('gemini-key-input').value.trim();
+  if(!key) return toast('⚠️ 請輸入 API Key');
+  db.geminiKey = key;
+  saveData();
+  toast('✅ Gemini API Key 已儲存');
+}
+
+function toggleKeyVis() {
+  const inp = document.getElementById('gemini-key-input');
+  const btn = inp.nextElementSibling;
+  if(inp.type === 'password') { inp.type = 'text'; btn.textContent = '隱藏'; }
+  else { inp.type = 'password'; btn.textContent = '顯示'; }
+}
+
+function loadGeminiKeyToInput() {
+  const inp = document.getElementById('gemini-key-input');
+  if(inp && db.geminiKey) inp.value = db.geminiKey;
+}
+
 // ── Budget feature ────────────────────────────────────────
 const DEFAULT_CATS = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他'];
 
@@ -1296,29 +1343,43 @@ async function handleOcrUpload(input) {
 }
 
 async function callClaudeOCR(base64, mediaType) {
+  const apiKey = db.geminiKey || '';
+  if(!apiKey) {
+    throw new Error('尚未設定 Gemini API Key，請到「設定」頁面輸入');
+  }
+
   const prompt = `這是一張台灣券商股票庫存截圖。請辨識所有持股，以純 JSON 格式回覆，不要有任何其他文字：
 [
-  {"symbol":"股票代號(只要數字,如2330)","name":"股票名稱","shares":持股數量(數字),"avgPrice":成交均價(數字),"currentPrice":市價或現價(數字,若沒有則null)},
-  ...
+  {"symbol":"股票代號(只要數字,如2330)","name":"股票名稱","shares":持股數量(數字),"avgPrice":成交均價(數字),"currentPrice":市價或現價(數字,若沒有則null)}
 ]
 注意：代號只取數字部分（如0050、006208、2330），shares、avgPrice、currentPrice 都要是純數字，不要有逗號。`;
 
-  const endpoint = '/.netlify/functions/ai-proxy';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-  const response = await fetch(endpoint, {
+  const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: base64, mediaType, prompt })
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: mediaType, data: base64 } },
+          { text: prompt }
+        ]
+      }],
+      generationConfig: { temperature: 0.1 }
+    })
   });
 
   if(!response.ok) {
     const err = await response.json().catch(()=>({}));
-    throw new Error(err.error?.message || `HTTP ${response.status}`);
+    const msg = err.error?.message || `HTTP ${response.status}`;
+    if(msg.includes('API_KEY_INVALID') || msg.includes('400')) throw new Error('API Key 無效，請重新確認');
+    throw new Error(msg);
   }
 
   const data = await response.json();
-  if(data.error) throw new Error(data.error.message);
-  const text = data.content[0].text.trim();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  if(!text) throw new Error('Gemini 未回傳結果');
   const clean = text.replace(/```json|```/g, '').trim();
   return JSON.parse(clean);
 }
