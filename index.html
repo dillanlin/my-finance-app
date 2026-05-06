@@ -245,16 +245,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
       <!-- Holdings -->
       <div class="section-title">持股庫存</div>
+      <div id="stock-summary" style="display:flex;gap:8px;margin-bottom:10px;"></div>
       <div class="card" style="padding:0;overflow-x:auto;">
         <table class="stk-table" style="min-width:360px;">
-          <thead><tr><th>代號</th><th>持股</th><th>均價</th><th>現價</th><th>損益</th></tr></thead>
+          <thead><tr><th>代號</th><th>持股</th><th>均價</th><th>現價</th><th>市值</th><th>損益</th><th>報酬率</th></tr></thead>
           <tbody id="stock-table-body"></tbody>
         </table>
       </div>
-
-      <!-- Price board -->
-      <div class="section-title">現價輸入</div>
-      <div class="card card-body" id="price-board"></div>
 
       <!-- Chart -->
       <div class="section-title">市值走勢</div>
@@ -466,6 +463,21 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 
+<!-- Custom category sheet -->
+<div class="sheet-overlay" id="sheet-custom-cat" onclick="closeSheetOnBg(event,'sheet-custom-cat')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">管理記帳類別</div>
+    <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;">可新增自訂類別，預設類別無法刪除</div>
+    <div id="cat-list" style="margin-bottom:14px;"></div>
+    <div style="display:flex;gap:8px;">
+      <input type="text" class="form-input" id="new-cat-input" placeholder="輸入新類別名稱" style="flex:1;">
+      <button class="btn btn-primary" style="width:auto;padding:0 16px;" onclick="addCustomCat()">新增</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- OCR Screenshot import -->
 <div class="sheet-overlay" id="sheet-ocr" onclick="closeSheetOnBg(event,'sheet-ocr')">
   <div class="sheet">
@@ -603,11 +615,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div id="exp-preview" style="text-align:center;font-size:12px;color:var(--muted,#94a3b8);margin:-6px 0 10px;min-height:16px;"></div>
     <div class="form-group">
       <label class="form-label">類別</label>
-      <select class="form-select" id="exp-cat">
-        <option>餐費</option><option>交通</option><option>購物</option>
-        <option>娛樂</option><option>醫療</option><option>住房</option>
-        <option>訂閱</option><option>其他</option>
-      </select>
+      <div style="display:flex;gap:6px;">
+        <select class="form-select" id="exp-cat" style="flex:1;" onchange="handleCatChange(this)"></select>
+        <button type="button" class="btn btn-ghost btn-sm" style="width:42px;flex-shrink:0;" onclick="openSheet('custom-cat')" title="管理類別">⚙️</button>
+      </div>
     </div>
     <div class="form-group">
       <label class="form-label">扣款帳戶</label>
@@ -717,12 +728,14 @@ window.addEventListener('DOMContentLoaded', () => {
   if(!db.subs) db.subs=[];
   if(!db.budgets) db.budgets={};
   if(!db.geminiKey) db.geminiKey='';
+  if(!db.customCats) db.customCats=[];
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
   });
   updateUI();
   handleURLParams();
+  autoSnapshotIfNeeded();
 });
 
 // ── URL params (Apple Shortcut) ───────────────────────────
@@ -770,6 +783,7 @@ function openSheet(name) {
   if(name==='ocr') resetOcrSheet();
   if(name==='budget') { openBudgetSheet(); }
   if(name==='ai-report') { openAiReportSheet(); }
+  if(name==='custom-cat') { openCustomCatSheet(); }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
 }
@@ -777,6 +791,7 @@ function closeSheet(name) { document.getElementById('sheet-'+name).classList.rem
 function closeSheetOnBg(e, name) { if(e.target===e.currentTarget) closeSheet(name); }
 
 function populateSheetSelects(name) {
+  if(name==='expense') refreshCatSelect();
   const accOpts = db.assets.map(a=>`<option value="${a.id}">${a.name}${a.isDelivery?' ★':''}</option>`).join('');
   const maps = {
     buy: ['buy-account'],
@@ -1105,17 +1120,7 @@ function renderAccountChips(){
       </div>`;
 }
 
-function renderPriceBoard(){
-  const syms=[...new Set(db.stock.map(s=>s.symbol))].sort();
-  const el=document.getElementById('price-board');
-  if(!syms.length){el.innerHTML='<div style="color:var(--muted);font-size:13px;">尚無持股</div>';return;}
-  el.innerHTML='<div class="price-grid">'+syms.map(sym=>`
-    <div class="price-cell">
-      <div class="price-sym">${sym}</div>
-      <input class="price-input" type="number" value="${db.prices[sym]||''}" placeholder="輸入現價"
-        oninput="updatePrice('${sym}',this.value)">
-    </div>`).join('')+'</div>';
-}
+function renderPriceBoard(){ /* removed - using TWSE auto-fetch */ }
 window.updatePrice=(sym,val)=>{db.prices[sym]=val;saveData();renderStockTable();renderStats();renderDashAssets();};
 
 function renderStockTable(){
@@ -1126,28 +1131,75 @@ function renderStockTable(){
   });
   const tbody=document.getElementById('stock-table-body');
   const rows=Object.values(agg);
-  if(!rows.length){tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px;font-size:13px;"><div style="font-size:28px;margin-bottom:8px;opacity:.4;">📊</div>尚無持股紀錄<br><span style="font-size:12px;">點下方「新增買入」開始建立</span></td></tr>';return;}
-  tbody.innerHTML=rows.sort((a,b)=>b.cost-a.cost).map(s=>{
-    const curP=db.prices[s.sym];
-    const avg=s.cost/s.shares;
-    const mkt=(curP?parseFloat(curP):avg)*s.shares;
-    const pl=mkt-s.cost;
-    const cls=pl>=0?'pos':'neg';
-    const sign=pl>=0?'+':'';
-    return `<tr>
-      <td style="font-weight:700;color:var(--blue);">${s.sym}</td>
-      <td>${s.shares.toLocaleString()}</td>
-      <td>$${Math.round(avg).toLocaleString()}</td>
-      <td>${curP?'$'+parseFloat(curP).toLocaleString():'-'}</td>
-      <td class="${cls}">${curP?sign+fmt(pl):'-'}</td>
-    </tr>`;
+  if(!rows.length){
+    tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted,#94a3b8);padding:24px;font-size:13px;"><div style="font-size:28px;margin-bottom:8px;opacity:.4;">📊</div>尚無持股紀錄<br><span style="font-size:12px;">點下方「新增買入」開始建立</span></td></tr>';
+    return;
+  }
+  let totalCost=0, totalMkt=0;
+  const rowsHtml = rows.sort((a,b)=>b.cost-a.cost).map(s=>{
+    const curP = db.prices[s.sym];
+    const avg = s.cost/s.shares;
+    const mkt = (curP?parseFloat(curP):avg)*s.shares;
+    const pl = mkt-s.cost;
+    const roi = s.cost?(pl/s.cost*100):0;
+    const cls = pl>=0?'pos':'neg';
+    const sign = pl>=0?'+':'';
+    totalCost+=s.cost; totalMkt+=mkt;
+    return '<tr>'
+      +'<td style="font-weight:700;color:var(--blue,#3b82f6);">'+s.sym+'</td>'
+      +'<td>'+s.shares.toLocaleString()+'</td>'
+      +'<td>$'+Math.round(avg).toLocaleString()+'</td>'
+      +'<td style="font-weight:600;">'+(curP?'$'+parseFloat(curP).toLocaleString():'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
+      +'<td style="font-weight:600;">$'+Math.round(mkt).toLocaleString()+'</td>'
+      +'<td class="'+cls+'">'+(curP?sign+fmt(pl):'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
+      +'<td class="'+cls+'">'+(curP?sign+roi.toFixed(1)+'%':'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
+      +'</tr>';
   }).join('');
+
+  // Totals row
+  const totalPl = totalMkt-totalCost;
+  const totalRoi = totalCost?(totalPl/totalCost*100):0;
+  const totalCls = totalPl>=0?'pos':'neg';
+  const totalSign = totalPl>=0?'+':'';
+  const totalsRow = '<tr style="background:var(--bg3,#334155);font-weight:700;border-top:2px solid rgba(255,255,255,.15);">'
+    +'<td colspan="2" style="font-size:12px;color:var(--muted,#94a3b8);letter-spacing:.5px;">合計</td>'
+    +'<td></td><td></td>'
+    +'<td style="font-weight:700;">$'+Math.round(totalMkt).toLocaleString()+'</td>'
+    +'<td class="'+totalCls+'" style="font-weight:700;">'+totalSign+fmt(totalPl)+'</td>'
+    +'<td class="'+totalCls+'" style="font-weight:700;">'+totalSign+totalRoi.toFixed(1)+'%</td>'
+    +'</tr>';
+
+  // Summary cards above table
+  const summaryEl = document.getElementById('stock-summary');
+  if(summaryEl){
+    summaryEl.innerHTML = ''
+      +'<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 14px;">'
+        +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">總投入成本</div>'
+        +'<div style="font-size:18px;font-weight:700;">$'+Math.round(totalCost).toLocaleString()+'</div>'
+      +'</div>'
+      +'<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 14px;">'
+        +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">目前市值</div>'
+        +'<div style="font-size:18px;font-weight:700;">$'+Math.round(totalMkt).toLocaleString()+'</div>'
+      +'</div>'
+      +'<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 14px;border:1px solid '+(totalPl>=0?'rgba(248,113,113,.3)':'rgba(16,185,129,.3)')+';">'
+        +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">總損益</div>'
+        +'<div style="font-size:18px;font-weight:700;" class="'+totalCls+'">'+totalSign+'$'+Math.round(Math.abs(totalPl)).toLocaleString()+'</div>'
+        +'<div style="font-size:11px;" class="'+totalCls+'">'+totalSign+totalRoi.toFixed(1)+'%</div>'
+      +'</div>';
+  }
+
+  tbody.innerHTML = rowsHtml + totalsRow;
 }
 
 const CAT_ICONS = {
   '餐費':'🍜','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊',
   '住房':'🏠','訂閱':'📱','薪水':'💰','股利':'📈','其他':'📦'
 };
+
+function deleteExpense(id){
+  db.expenses=db.expenses.filter(e=>e.id!==id);
+  saveData(); updateUI(); toast('已刪除');
+}
 
 function renderRecentExpenses(){
   const el=document.getElementById('recent-expenses');
@@ -1178,14 +1230,15 @@ function renderRecentExpenses(){
     byDate[date].forEach(e=>{
       const color=catColors[e.category]||'muted';
       const icon=CAT_ICONS[e.category]||'📦';
-      html+=`<div class="list-row" style="padding:10px 16px;">
+      html+=`<div class="list-row expense-row" style="padding:10px 16px;position:relative;overflow:hidden;" id="exp-row-${e.id}">
         <div class="list-icon" style="background:rgba(${colorToRgb(color)},.15);color:var(--${color});font-size:18px;width:38px;height:38px;">${icon}</div>
         <div class="list-main">
           <div class="list-title" style="font-size:14px;">${e.category}</div>
           <div class="list-sub">${e.paymentMethod||''}</div>
         </div>
-        <div class="list-right">
-          <div class="list-value" style="color:var(--red);font-size:15px;">-$${Math.round(e.amount).toLocaleString()}</div>
+        <div class="list-right" style="display:flex;align-items:center;gap:10px;">
+          <div class="list-value" style="color:var(--red,#f87171);font-size:15px;">-$${Math.round(e.amount).toLocaleString()}</div>
+          <button onclick="deleteExpense(${e.id})" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">✕</button>
         </div>
       </div>`;
     });
@@ -1510,9 +1563,99 @@ async function runAiReport() {
   }
 }
 
-// ── Budget feature ────────────────────────────────────────
-const DEFAULT_CATS = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他'];
 
+
+// ── Custom Categories ─────────────────────────────────────
+const DEFAULT_CATS = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他'];
+const CAT_EMOJIS = {'餐費':'🍜','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊','住房':'🏠','訂閱':'📱','其他':'📦'};
+
+function getAllCats(){
+  if(!db.customCats) db.customCats=[];
+  return [...DEFAULT_CATS, ...db.customCats.filter(c=>!DEFAULT_CATS.includes(c))];
+}
+
+function refreshCatSelect(){
+  const sel=document.getElementById('exp-cat');
+  if(!sel) return;
+  const cur=sel.value;
+  const cats=getAllCats();
+  sel.innerHTML=cats.map(c=>`<option value="${c}">${CAT_EMOJIS[c]||'🏷️'} ${c}</option>`).join('');
+  if(cur && cats.includes(cur)) sel.value=cur;
+}
+
+function handleCatChange(sel){
+  // nothing needed now - reserved for future
+}
+
+function openCustomCatSheet(){
+  if(!db.customCats) db.customCats=[];
+  const cats=getAllCats();
+  document.getElementById('cat-list').innerHTML=cats.map(c=>{
+    const isDefault=DEFAULT_CATS.includes(c);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:0.5px solid rgba(255,255,255,.08);">
+      <span style="font-size:18px;">${CAT_EMOJIS[c]||'🏷️'}</span>
+      <span style="flex:1;font-size:15px;">${c}</span>
+      ${isDefault
+        ? '<span style="font-size:11px;color:var(--muted,#94a3b8);padding:2px 8px;background:rgba(255,255,255,.06);border-radius:99px;">預設</span>'
+        : `<button onclick="deleteCustomCat('${c}')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:14px;">✕</button>`
+      }
+    </div>`;
+  }).join('');
+  document.getElementById('new-cat-input').value='';
+}
+
+function addCustomCat(){
+  const val=document.getElementById('new-cat-input').value.trim();
+  if(!val) return toast('⚠️ 請輸入類別名稱');
+  if(!db.customCats) db.customCats=[];
+  if(getAllCats().includes(val)) return toast('⚠️ 此類別已存在');
+  db.customCats.push(val);
+  saveData(); refreshCatSelect(); openCustomCatSheet();
+  toast('✅ 已新增類別：'+val);
+}
+
+function deleteCustomCat(cat){
+  if(!confirm('確定刪除「'+cat+'」類別？')) return;
+  db.customCats=db.customCats.filter(c=>c!==cat);
+  saveData(); refreshCatSelect(); openCustomCatSheet();
+  toast('已刪除類別');
+}
+
+// ── Asset History Snapshot (auto monthly) ────────────────
+function takeSnapshot(){
+  const ym = new Date().toISOString().slice(0,7);
+  if(!db.snapshots) db.snapshots=[];
+  const stockMkt = Object.entries(db.prices).reduce((sum,[sym,p])=>{
+    const shares=db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
+    return sum+shares*(parseFloat(p)||0);
+  },0);
+  const cash=db.assets.reduce((a,b)=>a+b.balance,0);
+  const net=stockMkt+cash;
+  const existing=db.snapshots.find(s=>s.ym===ym);
+  if(existing){ existing.net=net; existing.stock=stockMkt; existing.cash=cash; }
+  else db.snapshots.push({ym,net,stock:stockMkt,cash});
+  db.snapshots.sort((a,b)=>a.ym.localeCompare(b.ym));
+  saveData();
+}
+
+function autoSnapshotIfNeeded(){
+  if(!db.snapshots) db.snapshots=[];
+  const ym=new Date().toISOString().slice(0,7);
+  const today=new Date().getDate();
+  const lastSnap=db.snapshots[db.snapshots.length-1];
+  // Take snapshot if: no snapshot this month AND it's been at least 1 day since app opened
+  const lastOpenKey='lastOpenDate';
+  const lastOpen=localStorage.getItem(lastOpenKey)||'';
+  const todayStr=new Date().toISOString().split('T')[0];
+  localStorage.setItem(lastOpenKey, todayStr);
+  const alreadyThisMonth=lastSnap && lastSnap.ym===ym;
+  if(!alreadyThisMonth && lastOpen && lastOpen!==todayStr){
+    takeSnapshot();
+    console.log('Auto snapshot taken for '+ym);
+  }
+}
+
+// ── Budget feature ────────────────────────────────────────
 function getThisMonthExpenses() {
   const ym = new Date().toISOString().slice(0,7);
   const map = {};
