@@ -234,7 +234,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="page" id="page-stock">
       <!-- Price status -->
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <span id="price-badge" class="manual-badge" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:4px 10px;border-radius:99px;"><span>⬤</span> 手動模式</span>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span id="price-badge" class="manual-badge" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:4px 10px;border-radius:99px;"><span>⬤</span> 手動模式</span>
+          <span id="last-update" style="font-size:11px;color:var(--muted,#94a3b8);padding-left:4px;"></span>
+        </div>
         <button class="btn btn-ghost btn-sm" id="refresh-btn" onclick="fetchAllPrices()">
           <i class="fa-solid fa-arrows-rotate" id="refresh-icon"></i> 更新現價
         </button>
@@ -283,10 +286,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
 
       <!-- Actions -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <button class="btn btn-red" onclick="openSheet('expense')"><i class="fa-solid fa-minus"></i> 記帳支出</button>
         <button class="btn btn-green" onclick="openSheet('income')"><i class="fa-solid fa-plus"></i> 新增收入</button>
       </div>
+      <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;margin-bottom:12px;" onclick="openSheet('ai-report')">
+        <i class="fa-solid fa-brain"></i> AI 分析本月消費
+      </button>
 
       <!-- Fixed expenses -->
       <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
@@ -410,6 +416,56 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 <!-- ── Bottom Sheets ── -->
+<!-- AI report sheet -->
+<div class="sheet-overlay" id="sheet-ai-report" onclick="closeSheetOnBg(event,'sheet-ai-report')">
+  <div class="sheet" style="max-height:88vh;">
+    <div class="sheet-handle"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div class="sheet-title" style="margin-bottom:0;">AI 消費分析報告</div>
+      <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
+    </div>
+
+    <!-- Idle state -->
+    <div id="ai-report-idle">
+      <div style="background:var(--bg3,#334155);border-radius:14px;padding:16px;margin-bottom:16px;">
+        <div style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.8;">
+          AI 會分析你本月的：<br>
+          🧾 各類別支出比例 &nbsp;·&nbsp; 📈 與上月比較<br>
+          💡 節省建議 &nbsp;·&nbsp; 🎯 下個月預算規劃
+        </div>
+      </div>
+      <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;" onclick="runAiReport()">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> 開始分析
+      </button>
+      <div id="ai-report-no-key" style="display:none;margin-top:12px;padding:12px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);">
+        ⚠️ 尚未設定 Gemini API Key，請到「設定」頁面輸入後再試
+      </div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;">
+      <div style="font-size:32px;margin-bottom:12px;">🤔</div>
+      <div style="font-size:15px;font-weight:500;margin-bottom:6px;">AI 分析中...</div>
+      <div style="font-size:13px;color:var(--muted,#94a3b8);" id="ai-loading-text">整理你的消費資料</div>
+    </div>
+
+    <!-- Result state -->
+    <div id="ai-report-result" style="display:none;">
+      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;padding-bottom:12px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+        <button class="btn btn-ghost" onclick="runAiReport()">
+          <i class="fa-solid fa-rotate-right"></i> 重新分析
+        </button>
+        <button class="btn btn-ghost" onclick="closeSheet('ai-report')">關閉</button>
+      </div>
+    </div>
+
+    <!-- Error state -->
+    <div id="ai-report-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);margin-bottom:12px;"></div>
+  </div>
+</div>
+
+
 <!-- OCR Screenshot import -->
 <div class="sheet-overlay" id="sheet-ocr" onclick="closeSheetOnBg(event,'sheet-ocr')">
   <div class="sheet">
@@ -697,13 +753,23 @@ function switchPage(name, tab) {
   if(name==='settings') setTimeout(loadGeminiKeyToInput, 50);
   document.getElementById('header-title').textContent = titles[name]||'';
   if(name==='cashflow') renderExpenseChart();
-  if(name==='stock') renderStockChart();
+  if(name==='stock') {
+    renderStockChart();
+    const isTrading = (() => {
+      const now = new Date();
+      const h = now.getHours(), m = now.getMinutes(), day = now.getDay();
+      const mins = h*60+m;
+      return day>=1 && day<=5 && mins>=540 && mins<=810;
+    })();
+    if(isTrading) setTimeout(fetchAllPrices, 300);
+  }
 }
 
 // ── Sheet control ─────────────────────────────────────────
 function openSheet(name) {
   if(name==='ocr') resetOcrSheet();
   if(name==='budget') { openBudgetSheet(); }
+  if(name==='ai-report') { openAiReportSheet(); }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
 }
@@ -773,23 +839,71 @@ async function fetchAllPrices() {
   const btn=document.getElementById('refresh-btn');
   const icon=document.getElementById('refresh-icon');
   btn.disabled=true; icon.className='fa-solid fa-arrows-rotate spin';
-  let ok=0;
-  for(const sym of syms) {
+
+  let ok=0, results={};
+
+  // ── 方法1：TWSE 官方即時 API（盤中最準）──
+  try {
+    const exCh = syms.map(s=>`tse_${s}.tw`).join('|');
+    const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${exCh}&json=1&delay=0`;
+    const r = await fetch(url, {headers:{'Accept':'application/json'}});
+    const data = await r.json();
+    if(data?.msgArray?.length) {
+      data.msgArray.forEach(item => {
+        const sym = item.c;
+        const price = parseFloat(item.z || item.y);
+        if(sym && price && !isNaN(price)) { results[sym]=price; ok++; }
+      });
+    }
+  } catch(e){ console.log('TWSE mis failed:', e.message); }
+
+  // ── 方法2：TWSE OpenAPI（收盤後仍可用）──
+  if(ok < syms.length) {
     try {
-      const r=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}.TW?interval=1d&range=1d`);
-      const data=await r.json();
-      const p=data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if(p){db.prices[sym]=p.toString();ok++;}
-    } catch{}
+      const r2 = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+      const list = await r2.json();
+      syms.forEach(sym => {
+        if(results[sym]) return;
+        const item = list.find(d=>d.Code===sym);
+        if(item) {
+          const price = parseFloat(item.ClosingPrice?.replace(/,/g,''));
+          if(price && !isNaN(price)) { results[sym]=price; ok++; }
+        }
+      });
+    } catch(e){ console.log('TWSE openapi failed:', e.message); }
   }
+
+  // ── 方法3：Yahoo Finance 備援 ──
+  if(ok < syms.length) {
+    for(const sym of syms) {
+      if(results[sym]) continue;
+      try {
+        const r3=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}.TW?interval=1d&range=1d`);
+        const d=await r3.json();
+        const p=d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+        if(p){ results[sym]=p; ok++; }
+      } catch{}
+    }
+  }
+
+  // 寫入結果
+  Object.entries(results).forEach(([sym,price])=>{ db.prices[sym]=price.toString(); });
+
   btn.disabled=false; icon.className='fa-solid fa-arrows-rotate';
+
+  const badge=document.getElementById('price-badge');
+  const timeEl=document.getElementById('last-update');
+  const now=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+
   if(ok>0){
-    const badge=document.getElementById('price-badge');
     badge.className='live-badge';
-    badge.innerHTML='<span class="live-dot"></span> 即時';
-    toast(`✅ 已更新 ${ok}/${syms.length} 支股票`);
+    badge.innerHTML='<span class="live-dot"></span> TWSE 即時';
+    if(timeEl) timeEl.textContent='更新：'+now;
+    toast(`✅ 已更新 ${ok}/${syms.length} 支　${now}`);
   } else {
-    toast('⚠️ 無法自動抓取，請手動輸入');
+    badge.className='manual-badge';
+    badge.innerHTML='<span>⬤</span> 手動模式';
+    toast('⚠️ 無法取得即時價，請確認網路或手動輸入');
   }
   saveData(); updateUI();
 }
@@ -1271,6 +1385,129 @@ function toggleKeyVis() {
 function loadGeminiKeyToInput() {
   const inp = document.getElementById('gemini-key-input');
   if(inp && db.geminiKey) inp.value = db.geminiKey;
+}
+
+
+// ── AI Monthly Report ─────────────────────────────────────
+const LOADING_MSGS = [
+  '整理你的消費資料...',
+  '計算各類別比例...',
+  '比較上個月差異...',
+  'AI 思考建議中...',
+  '產生報告...'
+];
+
+function openAiReportSheet() {
+  const ym = new Date().toISOString().slice(0,7);
+  const [y,m] = ym.split('-');
+  document.getElementById('ai-report-month').textContent = `${y}年${parseInt(m)}月`;
+  document.getElementById('ai-report-idle').style.display = 'block';
+  document.getElementById('ai-report-loading').style.display = 'none';
+  document.getElementById('ai-report-result').style.display = 'none';
+  document.getElementById('ai-report-error').style.display = 'none';
+  document.getElementById('ai-report-no-key').style.display = db.geminiKey ? 'none' : 'block';
+}
+
+async function runAiReport() {
+  if(!db.geminiKey) {
+    document.getElementById('ai-report-no-key').style.display = 'block';
+    return;
+  }
+
+  const ym = new Date().toISOString().slice(0,7);
+  const prevYm = (() => {
+    const d = new Date(); d.setMonth(d.getMonth()-1);
+    return d.toISOString().slice(0,7);
+  })();
+
+  // Build this month's data
+  const thisMonth = db.expenses.filter(e => e.amount>0 && e.date.startsWith(ym));
+  const lastMonth = db.expenses.filter(e => e.amount>0 && e.date.startsWith(prevYm));
+
+  if(thisMonth.length === 0) {
+    document.getElementById('ai-report-error').style.display = 'block';
+    document.getElementById('ai-report-error').textContent = '⚠️ 本月還沒有支出紀錄，記幾筆帳後再試試！';
+    return;
+  }
+
+  // Aggregate by category
+  const thisMap = {}, lastMap = {};
+  thisMonth.forEach(e => thisMap[e.category] = (thisMap[e.category]||0) + e.amount);
+  lastMonth.forEach(e => lastMap[e.category] = (lastMap[e.category]||0) + e.amount);
+  const thisTotal = Object.values(thisMap).reduce((a,b)=>a+b,0);
+  const lastTotal = Object.values(lastMap).reduce((a,b)=>a+b,0);
+
+  // Build budget info
+  const budgetInfo = db.budgets && Object.keys(db.budgets).length
+    ? Object.entries(db.budgets).map(([cat,lim])=>`${cat}預算$${lim}`).join('、')
+    : '尚未設定預算';
+
+  // Build prompt
+  const catLines = Object.entries(thisMap)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([cat,amt])=>'  '+cat+'：$'+Math.round(amt).toLocaleString()+'（'+(amt/thisTotal*100).toFixed(1)+'%）')
+    .join('\n');
+  const stockMkt = Math.round(Object.entries(db.prices).reduce((sum,[sym,p])=>{
+    const shares = db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
+    return sum + shares*(parseFloat(p)||0);
+  },0));
+  const cashBal = Math.round(db.assets.reduce((a,b)=>a+b.balance,0));
+  const lastMonthStr = lastTotal>0 ? '$'+Math.round(lastTotal).toLocaleString() : '無資料';
+  const prompt = '你是一位親切的個人財務顧問，請用繁體中文分析以下消費資料，並給出實用建議。\n\n'
+    +'【本月（'+ym+'）支出明細】\n總計：$'+Math.round(thisTotal).toLocaleString()+'\n'+catLines+'\n\n'
+    +'【上月（'+prevYm+'）總支出】\n'+lastMonthStr+'\n\n'
+    +'【預算設定】\n'+budgetInfo+'\n\n'
+    +'【淨資產概況】\n股票市值約 $'+stockMkt.toLocaleString()+'，現金 $'+cashBal.toLocaleString()+'\n\n'
+    +'請依序提供：\n'
+    +'1. 本月消費總評（2-3句，語氣輕鬆正面）\n'
+    +'2. 各類別分析（哪些類別偏高、是否符合預算）\n'
+    +'3. 與上月比較（增減多少）\n'
+    +'4. 3個具體節省建議（針對比例最高的類別給出可執行方法）\n'
+    +'5. 下個月建議預算金額\n\n'
+    +'請用表情符號，語氣像朋友聊天，不要太正式。';
+
+  // Show loading
+  document.getElementById('ai-report-idle').style.display = 'none';
+  document.getElementById('ai-report-error').style.display = 'none';
+  document.getElementById('ai-report-loading').style.display = 'block';
+  document.getElementById('ai-report-result').style.display = 'none';
+
+  // Animate loading text
+  let msgIdx = 0;
+  const loadingTimer = setInterval(() => {
+    msgIdx = (msgIdx+1) % LOADING_MSGS.length;
+    const el = document.getElementById('ai-loading-text');
+    if(el) el.textContent = LOADING_MSGS[msgIdx];
+  }, 1200);
+
+  try {
+    const model = db.geminiModel || 'gemini-2.0-flash-exp';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 1200 }
+      })
+    });
+    const data = await r.json();
+    if(data.error) throw new Error(data.error.message);
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if(!text) throw new Error('AI 未回傳結果');
+
+    clearInterval(loadingTimer);
+    document.getElementById('ai-report-loading').style.display = 'none';
+    document.getElementById('ai-report-result').style.display = 'block';
+    document.getElementById('ai-report-content').textContent = text;
+
+  } catch(err) {
+    clearInterval(loadingTimer);
+    document.getElementById('ai-report-loading').style.display = 'none';
+    document.getElementById('ai-report-error').style.display = 'block';
+    document.getElementById('ai-report-error').textContent = '❌ 分析失敗：' + err.message;
+    document.getElementById('ai-report-idle').style.display = 'block';
+  }
 }
 
 // ── Budget feature ────────────────────────────────────────
