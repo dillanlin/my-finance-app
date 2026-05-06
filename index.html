@@ -361,6 +361,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <button class="btn btn-primary" onclick="saveGeminiKey()" style="margin-bottom:10px;">
           <i class="fa-solid fa-key"></i> 儲存 Key
         </button>
+        <button class="btn btn-ghost" onclick="testGeminiKey()" style="margin-bottom:10px;">
+          <i class="fa-solid fa-flask"></i> 測試 Key 並查看可用模型
+        </button>
+        <div id="test-result" style="display:none;background:var(--bg,#0f172a);border-radius:10px;padding:12px;font-size:12px;font-family:monospace;word-break:break-all;color:#10b981;margin-bottom:10px;max-height:200px;overflow-y:auto;"></div>
         <div style="background:rgba(59,130,246,.08);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--muted,#94a3b8);line-height:1.7;">
           📍 免費取得方式：<br>
           1. 開啟 <strong style="color:var(--blue,#3b82f6);">aistudio.google.com</strong><br>
@@ -1213,7 +1217,42 @@ function toast(msg){
 }
 
 
-// ── Gemini Key management ────────────────────────────────
+// ── Gemini Key management
+async function testGeminiKey() {
+  const key = document.getElementById('gemini-key-input').value.trim() || db.geminiKey;
+  const resultEl = document.getElementById('test-result');
+  if(!key) { toast('⚠️ 請先輸入 API Key'); return; }
+  resultEl.style.display = 'block';
+  resultEl.style.color = '#94a3b8';
+  resultEl.textContent = '測試中...';
+  try {
+    // 1. List available models
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    const data = await r.json();
+    if(data.error) {
+      resultEl.style.color = '#f87171';
+      resultEl.textContent = '❌ Key 錯誤：' + data.error.message;
+      return;
+    }
+    const models = (data.models || [])
+      .filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+      .map(m => m.name.replace('models/',''));
+    resultEl.style.color = '#10b981';
+    resultEl.innerHTML = '✅ Key 有效！可用模型：<br>' + models.join('<br>');
+    // Auto-use first vision-capable model
+    const visionModel = models.find(m => m.includes('flash') || m.includes('pro'));
+    if(visionModel) {
+      db.geminiModel = visionModel;
+      saveData();
+      resultEl.innerHTML += '<br><br>🎯 自動選用：<strong>' + visionModel + '</strong>';
+      toast('✅ 自動選用 ' + visionModel);
+    }
+  } catch(e) {
+    resultEl.style.color = '#f87171';
+    resultEl.textContent = '❌ 網路錯誤：' + e.message;
+  }
+}
+
 function saveGeminiKey() {
   const key = document.getElementById('gemini-key-input').value.trim();
   if(!key) return toast('⚠️ 請輸入 API Key');
@@ -1354,7 +1393,8 @@ async function callClaudeOCR(base64, mediaType) {
 ]
 注意：代號只取數字部分（如0050、006208、2330），shares、avgPrice、currentPrice 都要是純數字，不要有逗號。`;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const model = db.geminiModel || 'gemini-2.0-flash-exp';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',
