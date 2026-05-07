@@ -246,11 +246,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <!-- Holdings -->
       <div class="section-title">持股庫存</div>
       <div id="stock-summary" style="display:flex;gap:8px;margin-bottom:10px;"></div>
-      <div class="card" style="padding:0;overflow-x:auto;">
-        <table class="stk-table" style="min-width:360px;">
-          <thead><tr><th>代號</th><th>持股</th><th>均價</th><th>現價</th><th>市值</th><th>損益</th><th>報酬率</th></tr></thead>
-          <tbody id="stock-table-body"></tbody>
-        </table>
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+          <table class="stk-table" style="min-width:540px;width:100%;">
+            <thead><tr><th>代號</th><th>持股</th><th>均價</th><th>現價</th><th>市值</th><th>損益</th><th>報酬率</th></tr></thead>
+            <tbody id="stock-table-body"></tbody>
+          </table>
         </div>
       </div>
 
