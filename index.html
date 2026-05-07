@@ -251,6 +251,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <thead><tr><th>代號</th><th>持股</th><th>均價</th><th>現價</th><th>市值</th><th>損益</th><th>報酬率</th></tr></thead>
           <tbody id="stock-table-body"></tbody>
         </table>
+        </div>
       </div>
 
       <!-- Chart -->
@@ -1083,22 +1084,34 @@ function renderDashAssets(){
     items.push({type:'stock', name:s.sym, sub:`${s.shares.toLocaleString()} 股`, value:mkt, pl, hasPrice:!!curP});
   });
   db.assets.forEach(a=>items.push({type:'cash', name:a.name, sub:a.isDelivery?'★ 交割戶':'資金帳戶', value:a.balance, id:a.id}));
-  items.sort((a,b)=>b.value-a.value);
+  // Sort: cash accounts first (by value desc), then stocks (by value desc)
+  items.sort((a,b)=>{
+    if(a.type !== b.type) return a.type === 'cash' ? -1 : 1;
+    return b.value - a.value;
+  });
 
   const el=document.getElementById('dash-asset-list');
   if(!items.length){el.innerHTML='<div class="empty"><i class="fa-solid fa-chart-pie"></i>尚無資產紀錄</div>';return;}
-  el.innerHTML=items.map(item=>{
-    const iconCls=item.type==='stock'?'blue':'green';
-    const icon=item.type==='stock'?'fa-chart-line':'fa-building-columns';
-    let change='';
-    if(item.type==='stock'&&item.hasPrice){
-      const cls=item.pl>=0?'pos':'neg';
-      const sign=item.pl>=0?'+':'';
-      change=`<div class="list-change ${cls}">${sign}${fmt(item.pl)}</div>`;
-    } else if(item.type==='cash'){
-      change=`<div class="list-change" style="color:var(--muted);cursor:pointer;" onclick="openAccountSheet(${item.id})">點擊編輯</div>`;
+  // Build with section headers
+  let html = '';
+  let lastType = null;
+  items.forEach(item => {
+    if(item.type !== lastType) {
+      const sectionLabel = item.type === 'cash' ? '💼 資金帳戶' : '📈 持股';
+      html += `<div style="padding:10px 16px 6px;font-size:11px;font-weight:600;color:var(--muted,#94a3b8);letter-spacing:.5px;text-transform:uppercase;background:rgba(255,255,255,.02);">${sectionLabel}</div>`;
+      lastType = item.type;
     }
-    return `<div class="list-row">
+    const iconCls = item.type==='stock' ? 'blue' : 'green';
+    const icon = item.type==='stock' ? 'fa-chart-line' : 'fa-building-columns';
+    let change = '';
+    if(item.type==='stock' && item.hasPrice) {
+      const cls = item.pl >= 0 ? 'pos' : 'neg';
+      const sign = item.pl >= 0 ? '+' : '';
+      change = `<div class="list-change ${cls}">${sign}${fmt(item.pl)}</div>`;
+    } else if(item.type==='cash') {
+      change = `<div class="list-change" style="color:var(--muted);cursor:pointer;" onclick="openAccountSheet(${item.id})">點擊編輯</div>`;
+    }
+    html += `<div class="list-row">
       <div class="list-icon ${iconCls}"><i class="fa-solid ${icon}"></i></div>
       <div class="list-main">
         <div class="list-title">${item.name}</div>
@@ -1109,7 +1122,8 @@ function renderDashAssets(){
         ${change}
       </div>
     </div>`;
-  }).join('');
+  });
+  el.innerHTML = html;
 }
 
 function renderAccountChips(){
@@ -1774,31 +1788,62 @@ function getThisMonthExpenses() {
 function renderBudgetBars() {
   const el = document.getElementById('budget-bars');
   if(!el) return;
-  if(!db.budgets || !Object.keys(db.budgets).length) {
-    el.innerHTML = '<div style="text-align:center;padding:16px 0;font-size:13px;color:var(--muted,#94a3b8);">尚未設定預算，點右上角「設定預算」開始</div>';
+  const spent = getThisMonthExpenses();
+  const spentCats = Object.keys(spent);
+  const budgets = db.budgets || {};
+  const budgetCats = Object.keys(budgets).filter(c=>budgets[c]>0);
+
+  // Show: all budgeted cats + all cats with spending this month
+  const allCats = [...new Set([...budgetCats, ...spentCats])];
+
+  if(!allCats.length) {
+    el.innerHTML = '<div style="text-align:center;padding:16px 0;font-size:13px;color:var(--muted,#94a3b8);">本月還沒有支出，去記帳開始追蹤吧 📝</div>';
     return;
   }
-  const spent = getThisMonthExpenses();
-  const html = Object.entries(db.budgets).filter(([,v]) => v > 0).map(([cat, limit]) => {
+
+  // Sort: budget+over first, budget+normal, no budget last
+  allCats.sort((a,b)=>{
+    const aHas = !!budgets[a], bHas = !!budgets[b];
+    const aOver = aHas && spent[a] > budgets[a];
+    const bOver = bHas && spent[b] > budgets[b];
+    if(aOver !== bOver) return aOver ? -1 : 1;
+    if(aHas !== bHas) return aHas ? -1 : 1;
+    return (spent[b]||0) - (spent[a]||0);
+  });
+
+  const html = allCats.map(cat => {
     const use = spent[cat] || 0;
+    const limit = budgets[cat];
+    const emoji = (typeof CAT_EMOJIS !== 'undefined' && CAT_EMOJIS[cat]) ? CAT_EMOJIS[cat] : '🏷️';
+
+    if(!limit) {
+      // No budget set - show as info card with "set budget" link
+      return `<div style="background:var(--card,#1e293b);border-radius:14px;border:1px solid rgba(255,255,255,.08);padding:12px 14px;margin-bottom:8px;cursor:pointer;" onclick="openSheet('budget')">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:14px;font-weight:500;">${emoji} ${cat}</span>
+          <span style="font-size:13px;color:var(--muted,#94a3b8);">$${Math.round(use).toLocaleString()} <span style="opacity:.5;">尚未設定預算</span></span>
+        </div>
+      </div>`;
+    }
+
     const pct = Math.min(use / limit * 100, 100);
     const over = use > limit;
     const barColor = over ? '#f87171' : pct > 80 ? '#fbbf24' : '#10b981';
     const textColor = over ? '#f87171' : pct > 80 ? '#fbbf24' : '#94a3b8';
     return `<div style="background:var(--card,#1e293b);border-radius:14px;border:1px solid ${over ? 'rgba(248,113,113,.3)' : 'rgba(255,255,255,.08)'};padding:12px 14px;margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <span style="font-size:14px;font-weight:500;">${cat}</span>
+        <span style="font-size:14px;font-weight:500;">${emoji} ${cat}</span>
         <span style="font-size:13px;color:${textColor};">${over ? '⚠️ ' : ''}$${Math.round(use).toLocaleString()} / $${Math.round(limit).toLocaleString()}</span>
       </div>
       <div style="height:6px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden;">
         <div style="height:100%;width:${pct}%;background:${barColor};border-radius:99px;transition:width .5s ease;"></div>
       </div>
       <div style="font-size:11px;color:${textColor};margin-top:5px;text-align:right;">
-        ${over ? `超出 $${Math.round(use-limit).toLocaleString()}` : `剩餘 $${Math.round(limit-use).toLocaleString()} (${(100-pct).toFixed(0)}%)`}
+        ${over ? '超出 $'+Math.round(use-limit).toLocaleString() : '剩餘 $'+Math.round(limit-use).toLocaleString()+' ('+(100-pct).toFixed(0)+'%)'}
       </div>
     </div>`;
   }).join('');
-  el.innerHTML = html || '<div style="text-align:center;padding:16px 0;font-size:13px;color:var(--muted,#94a3b8);">所有預算設為 0，點右上角修改</div>';
+  el.innerHTML = html;
 }
 
 function openBudgetSheet() {
