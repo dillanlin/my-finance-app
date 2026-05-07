@@ -476,9 +476,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="sheet-title">管理記帳類別</div>
     <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;">可新增自訂類別，預設類別無法刪除</div>
     <div id="cat-list" style="margin-bottom:14px;"></div>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
       <input type="text" class="form-input" id="new-cat-input" placeholder="輸入新類別名稱" style="flex:1;">
       <button class="btn btn-primary" style="width:auto;padding:0 16px;" onclick="addCustomCat()">新增</button>
+    </div>
+    <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:14px;">
+      <div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;">🪄 智能整理</div>
+      <button class="btn btn-ghost" onclick="consolidateCategories()" style="margin-bottom:6px;">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> 整理舊資料的類別
+      </button>
+      <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;line-height:1.5;">
+        把「咖啡」、「外食」等自動歸類到「餐費」<br>合併同樣意思但寫法不同的類別
+      </div>
     </div>
   </div>
 </div>
@@ -1373,9 +1382,10 @@ async function handleCSV(input){
         added++;
         if(defaultAcc) defaultAcc.balance -= t.amount;
         // Auto-add to custom categories if new
-        if(t.category && !DEFAULT_CATS.includes(t.category) && !db.customCats.includes(t.category)){
-          db.customCats.push(t.category);
-          newCats.add(t.category);
+        const trimmed = String(t.category||'').trim();
+        if(trimmed && !DEFAULT_CATS.includes(trimmed) && !db.customCats.includes(trimmed)){
+          db.customCats.push(trimmed);
+          newCats.add(trimmed);
         }
       } else { dup++; }
     });
@@ -1456,8 +1466,10 @@ function parseRows(rows, sheetName){
     if(isNaN(amount) || amount === 0) continue;
     amount = Math.abs(amount);  // Treat all as expenses
 
-    let category = String(cat||'').trim() || '未分類';
-    let noteStr = String(note||'').trim();
+    // Normalize category - remove full-width spaces, zero-width chars, multiple spaces
+    let rawCategory = String(cat||'').replace(/[\u3000\u200b\u00a0]/g,' ').replace(/\s+/g,' ').trim();
+    let category = normalizeCat(rawCategory) || '未分類';
+    let noteStr = String(note||'').replace(/[\u3000\u200b\u00a0]/g,' ').replace(/\s+/g,' ').trim();
 
     res.push({
       id: Date.now() + Math.random(),
@@ -1688,11 +1700,41 @@ async function runAiReport() {
 
 // ── Custom Categories ─────────────────────────────────────
 const DEFAULT_CATS = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他'];
-const CAT_EMOJIS = {'餐費':'🍜','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊','住房':'🏠','訂閱':'📱','其他':'📦'};
+const CAT_EMOJIS = {'餐費':'🍜','飲料':'🥤','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊','住房':'🏠','電費':'💡','水費':'💧','瓦斯':'🔥','電信網路':'📶','保險':'🛡','稅金':'📋','學費':'🎓','治裝':'👕','刷卡':'💳','雜費':'📦','訂閱':'📱','薪水':'💰','獎金':'🎁','利息':'🏦','股票':'📈','其他':'📦'};
 
 function getAllCats(){
   if(!db.customCats) db.customCats=[];
   return [...DEFAULT_CATS, ...db.customCats.filter(c=>!DEFAULT_CATS.includes(c))];
+}
+
+// 類別別名 - 自動把不同寫法統一成同一個類別
+const CAT_ALIASES = {
+  '餐費': ['餐費','餐飲','吃飯','飲食','三餐','早餐','午餐','晚餐','宵夜','零食','飲料','咖啡','美食','外食','便當','小吃'],
+  '交通': ['交通','交通費','油錢','加油','停車','停車費','計程車','uber','客運','高鐵','台鐵','捷運','公車','機票','悠遊卡','一卡通'],
+  '購物': ['購物','日用','日用品','生活用品','服飾','衣服','美妝','3c','電子','家電','百貨','網購','蝦皮','momo','pchome'],
+  '娛樂': ['娛樂','遊戲','電影','音樂','演唱會','旅遊','旅行','住宿','聚餐','派對','ktv','約會','禮物'],
+  '醫療': ['醫療','看病','診所','醫院','藥','藥品','保健','健檢','保險'],
+  '住房': ['住房','房租','租金','水費','電費','瓦斯','瓦斯費','管理費','網路費','寬頻','第四台','物業','水電'],
+  '訂閱': ['訂閱','月費','年費','netflix','spotify','youtube','apple','google','icloud','chatgpt','會員'],
+  '其他': ['其他','雜支','雜項']
+};
+
+function normalizeCat(rawCat){
+  if(!rawCat) return '其他';
+  const cat = String(rawCat).trim();
+  if(!cat) return '其他';
+  // Direct match first
+  if(DEFAULT_CATS.includes(cat)) return cat;
+  if(db.customCats && db.customCats.includes(cat)) return cat;
+  // Lowercase fuzzy match against aliases
+  const lower = cat.toLowerCase();
+  for(const [standard, aliases] of Object.entries(CAT_ALIASES)){
+    if(aliases.some(a => lower === a.toLowerCase() || lower.includes(a.toLowerCase()) || a.toLowerCase().includes(lower))){
+      return standard;
+    }
+  }
+  // No match - return as-is to be added as new custom category
+  return cat;
 }
 
 function refreshCatSelect(){
@@ -1741,6 +1783,42 @@ function deleteCustomCat(cat){
   saveData(); refreshCatSelect(); openCustomCatSheet();
   toast('已刪除類別');
 }
+
+function consolidateCategories(){
+  const before = {};
+  db.expenses.forEach(e => before[e.category] = (before[e.category]||0)+1);
+
+  let changes = 0;
+  const remap = {};
+  db.expenses.forEach(e => {
+    const newCat = normalizeCat(e.category);
+    if(newCat !== e.category){
+      remap[e.category] = newCat;
+      e.category = newCat;
+      changes++;
+    }
+  });
+
+  if(changes === 0){
+    toast('✅ 已經很整齊，沒有需要整理的');
+    return;
+  }
+
+  // Clean up customCats - remove any that are no longer used and not in DEFAULT_CATS
+  const usedCats = new Set(db.expenses.map(e=>e.category));
+  db.customCats = (db.customCats||[]).filter(c => usedCats.has(c) && !DEFAULT_CATS.includes(c));
+
+  saveData();
+  refreshCatSelect();
+  openCustomCatSheet();
+  updateUI();
+
+  // Show summary
+  const remapList = Object.entries(remap).map(([from,to])=>`「${from}」→「${to}」`).join('\n');
+  alert('✅ 已整理 '+changes+' 筆記錄\n\n'+remapList);
+}
+
+
 
 // ── Asset History Snapshot (auto monthly) ────────────────
 function takeSnapshot(){
@@ -1849,23 +1927,36 @@ function renderBudgetBars() {
 
 function openBudgetSheet() {
   if(!db.budgets) db.budgets = {};
-  const cats = [...new Set([...getAllCats(), ...db.expenses.map(e=>e.category)])];
-  document.getElementById('budget-inputs').innerHTML = cats.map(cat => `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-      <span style="font-size:15px;flex:1;color:var(--text,#f1f5f9);">${cat}</span>
+  // Collect all categories: custom + default + every used in expenses
+  const usedCats = db.expenses
+    .filter(e => e.amount > 0 && e.category)
+    .map(e => String(e.category).trim());
+  const cats = [...new Set([...getAllCats(), ...usedCats])].filter(Boolean);
+
+  if(typeof CAT_EMOJIS === 'undefined') window.CAT_EMOJIS = {};
+  const emojis = CAT_EMOJIS;
+
+  document.getElementById('budget-inputs').innerHTML = cats.map((cat, i) => {
+    const emoji = emojis[cat] || '🏷️';
+    const safeVal = db.budgets[cat] || '';
+    return `<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;" data-cat-idx="${i}">
+      <span style="font-size:15px;flex:1;color:var(--text,#f1f5f9);">${emoji} ${cat}</span>
       <div style="display:flex;align-items:center;gap:4px;">
         <span style="font-size:13px;color:var(--muted,#94a3b8);">$</span>
-        <input type="number" id="bgt-${cat}" value="${db.budgets[cat]||''}" placeholder="不限"
+        <input type="number" data-cat="${cat.replace(/"/g,'&quot;')}" value="${safeVal}" placeholder="不限"
           style="width:100px;background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;color:var(--text,#f1f5f9);font-size:15px;text-align:right;">
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function saveBudgets() {
   if(!db.budgets) db.budgets = {};
-  const cats = [...new Set([...getAllCats(), ...db.expenses.map(e=>e.category)])];
-  cats.forEach(cat => {
-    const val = parseFloat(document.getElementById('bgt-'+cat)?.value) || 0;
+  // Read all inputs with data-cat attribute
+  const inputs = document.querySelectorAll('#budget-inputs input[data-cat]');
+  inputs.forEach(inp => {
+    const cat = inp.getAttribute('data-cat');
+    const val = parseFloat(inp.value) || 0;
     if(val > 0) db.budgets[cat] = val;
     else delete db.budgets[cat];
   });
