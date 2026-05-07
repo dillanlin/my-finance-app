@@ -300,8 +300,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <button class="btn btn-ghost" style="margin-bottom:12px;" onclick="postSubs()"><i class="fa-solid fa-bolt"></i> 一鍵入帳固定支出</button>
 
       <!-- Import -->
-      <button class="btn btn-ghost" onclick="document.getElementById('csv-input').click()"><i class="fa-solid fa-file-excel"></i> 匯入 CSV / Excel</button>
-      <input type="file" id="csv-input" hidden multiple accept=".csv,.xlsx" onchange="handleCSV(this)">
+      <button class="btn btn-ghost" onclick="document.getElementById('csv-input').click()"><i class="fa-solid fa-file-excel"></i> 匯入記帳檔案</button>
+      <div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:-6px;margin-bottom:12px;text-align:center;line-height:1.5;">
+        支援 CSV / Excel ‧ Numbers 請先轉存為 Excel<br>
+        <span style="color:rgba(148,163,184,.7);">需含「日期」、「金額」欄位，類別欄可選</span>
+      </div>
+      <input type="file" id="csv-input" hidden multiple accept=".csv,.xlsx,.xls,.numbers" onchange="handleCSV(this)">
 
       <!-- Budget tracker -->
       <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
@@ -1303,48 +1307,150 @@ function renderStockChart(){
 
 // ── CSV import ────────────────────────────────────────────
 async function handleCSV(input){
-  const files=input.files; if(!files.length) return;
-  let newTrans=[];
-  const defaultAcc=db.assets.find(a=>!a.isDelivery)||db.assets[0];
+  const files = input.files;
+  if(!files.length) return;
+  const defaultAcc = db.assets.find(a=>!a.isDelivery) || db.assets[0];
+
+  let allTrans = [];
+  let warnings = [];
+
   for(let file of files){
-    const buf=await file.arrayBuffer();
-    const wb=XLSX.read(buf,{type:'array'});
-    wb.SheetNames.forEach(n=>{
-      const rows=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1});
-      newTrans=newTrans.concat(parseRows(rows));
-    });
+    const ext = file.name.toLowerCase().split('.').pop();
+    if(ext === 'numbers'){
+      warnings.push(`⚠️ Numbers 格式無法直接讀取`);
+      warnings.push(`請先在 Numbers App 點「檔案」→「轉存為」→「Excel」或「CSV」，再上傳轉換後的檔案。`);
+      continue;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array', cellDates:true});
+      let fileTrans = [];
+      wb.SheetNames.forEach(n=>{
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:false, dateNF:'yyyy-mm-dd'});
+        const parsed = parseRows(rows, n);
+        if(parsed.length) fileTrans = fileTrans.concat(parsed);
+      });
+      if(!fileTrans.length){
+        warnings.push(`⚠️ ${file.name}：未找到符合格式的資料`);
+        warnings.push(`格式需含「日期」與「金額」兩欄，類別欄位可選`);
+      } else {
+        allTrans = allTrans.concat(fileTrans);
+      }
+    } catch(err){
+      warnings.push(`❌ ${file.name}：讀取失敗 - ${err.message}`);
+    }
   }
-  if(newTrans.length){
-    let added=0;
-    const keys=new Set(db.expenses.map(e=>`${e.date}|${e.amount}|${e.category}`));
-    newTrans.forEach(t=>{
-      const k=`${t.date}|${t.amount}|${t.category}`;
-      if(!keys.has(k)){db.expenses.push(t);keys.add(k);added++;if(defaultAcc)defaultAcc.balance-=t.amount;}
+
+  // Show warnings if any
+  if(warnings.length){
+    alert(warnings.join('\n'));
+  }
+
+  if(allTrans.length){
+    let added = 0, dup = 0;
+    let newCats = new Set();
+    const keys = new Set(db.expenses.map(e=>`${e.date}|${e.amount}|${e.category}`));
+    allTrans.forEach(t=>{
+      const k = `${t.date}|${t.amount}|${t.category}`;
+      if(!keys.has(k)){
+        db.expenses.push(t);
+        keys.add(k);
+        added++;
+        if(defaultAcc) defaultAcc.balance -= t.amount;
+        // Auto-add to custom categories if new
+        if(t.category && !DEFAULT_CATS.includes(t.category) && !db.customCats.includes(t.category)){
+          db.customCats.push(t.category);
+          newCats.add(t.category);
+        }
+      } else { dup++; }
     });
     saveData(); updateUI();
-    toast(added>0?`✅ 匯入 ${added} 筆`:'無新資料');
+    let msg = `✅ 匯入 ${added} 筆`;
+    if(dup > 0) msg += `（跳過 ${dup} 筆重複）`;
+    if(newCats.size > 0) msg += `\n新增類別：${[...newCats].join('、')}`;
+    toast(msg);
+  } else if(!warnings.length) {
+    toast('沒有可匯入的資料');
   }
-  input.value='';
+
+  input.value = '';
 }
-function parseRows(rows){
-  let res=[],colMap={d:-1,a:-1,c:-1},start=-1;
-  for(let i=0;i<rows.length;i++){
-    const s=rows[i].join(',').toLowerCase();
-    if(s.includes('日期')&&s.includes('金額')){
-      start=i;
-      rows[i].forEach((c,idx)=>{const str=String(c).trim();if(str.includes('日期'))colMap.d=idx;if(str.includes('金額'))colMap.a=idx;if(str.includes('類別')||str.includes('項目'))colMap.c=idx;});
+
+function parseRows(rows, sheetName){
+  if(!rows || !rows.length) return [];
+  let colMap = {date:-1, amount:-1, category:-1, note:-1};
+  let headerIdx = -1;
+
+  // Find header row - look in first 10 rows
+  for(let i=0; i<Math.min(rows.length, 10); i++){
+    const row = rows[i] || [];
+    let dateCol=-1, amtCol=-1, catCol=-1, noteCol=-1;
+    row.forEach((cell, idx)=>{
+      const s = String(cell||'').trim().toLowerCase();
+      if(!s) return;
+      if(s.includes('日期') || s==='date' || s==='時間') dateCol=idx;
+      if(s.includes('金額') || s==='amount' || s.includes('支出') || s.includes('價格')) amtCol=idx;
+      if(s.includes('類別') || s.includes('分類') || s==='category' || s.includes('項目') || s.includes('類型')) catCol=idx;
+      if(s.includes('備註') || s.includes('說明') || s==='note' || s===' memo') noteCol=idx;
+    });
+    if(dateCol >= 0 && amtCol >= 0){
+      headerIdx = i;
+      colMap = {date:dateCol, amount:amtCol, category:catCol, note:noteCol};
       break;
     }
   }
-  if(start!==-1){
-    for(let i=start+1;i<rows.length;i++){
-      const r=rows[i];if(!r||!r[colMap.d])continue;
-      let date=r[colMap.d],amt=r[colMap.a],cat=r[colMap.c];
-      if(typeof date==='number') date=new Date((date-(25567+2))*86400*1000).toISOString().split('T')[0];
-      else date=String(date).trim().replace(/\//g,'-');
-      if(typeof amt==='string') amt=parseFloat(amt.replace(/,/g,''));
-      if(date&&amt) res.push({id:Date.now()+Math.random(),date,amount:amt,category:cat||'未分類'});
+
+  if(headerIdx === -1) return [];
+
+  let res = [];
+  for(let i = headerIdx + 1; i < rows.length; i++){
+    const r = rows[i] || [];
+    let date = r[colMap.date];
+    let amt = r[colMap.amount];
+    let cat = colMap.category >= 0 ? r[colMap.category] : '';
+    let note = colMap.note >= 0 ? r[colMap.note] : '';
+    if(!date || amt == null || amt === '') continue;
+
+    // Parse date - handle multiple formats
+    let dateStr = '';
+    if(date instanceof Date){
+      dateStr = date.toISOString().split('T')[0];
+    } else if(typeof date === 'number'){
+      dateStr = new Date((date-(25567+2))*86400*1000).toISOString().split('T')[0];
+    } else {
+      const s = String(date).trim();
+      // Try to parse various formats
+      const m = s.match(/(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/);
+      if(m){
+        dateStr = `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+      } else {
+        // Try parsing as Date
+        const d = new Date(s);
+        if(!isNaN(d.getTime())) dateStr = d.toISOString().split('T')[0];
+        else continue; // Skip rows with unparseable dates
+      }
     }
+
+    // Parse amount
+    let amount = 0;
+    if(typeof amt === 'string'){
+      amount = parseFloat(amt.replace(/[,$NT\s]/g,''));
+    } else {
+      amount = parseFloat(amt);
+    }
+    if(isNaN(amount) || amount === 0) continue;
+    amount = Math.abs(amount);  // Treat all as expenses
+
+    let category = String(cat||'').trim() || '未分類';
+    let noteStr = String(note||'').trim();
+
+    res.push({
+      id: Date.now() + Math.random(),
+      date: dateStr,
+      amount: amount,
+      category: category,
+      note: noteStr
+    });
   }
   return res;
 }
@@ -1697,7 +1803,7 @@ function renderBudgetBars() {
 
 function openBudgetSheet() {
   if(!db.budgets) db.budgets = {};
-  const cats = [...new Set([...DEFAULT_CATS, ...db.expenses.map(e=>e.category)])];
+  const cats = [...new Set([...getAllCats(), ...db.expenses.map(e=>e.category)])];
   document.getElementById('budget-inputs').innerHTML = cats.map(cat => `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
       <span style="font-size:15px;flex:1;color:var(--text,#f1f5f9);">${cat}</span>
@@ -1711,7 +1817,7 @@ function openBudgetSheet() {
 
 function saveBudgets() {
   if(!db.budgets) db.budgets = {};
-  const cats = [...new Set([...DEFAULT_CATS, ...db.expenses.map(e=>e.category)])];
+  const cats = [...new Set([...getAllCats(), ...db.expenses.map(e=>e.category)])];
   cats.forEach(cat => {
     const val = parseFloat(document.getElementById('bgt-'+cat)?.value) || 0;
     if(val > 0) db.budgets[cat] = val;
