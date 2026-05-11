@@ -355,6 +355,35 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
       <input type="file" id="import-file" hidden accept=".json" onchange="importData(this)">
 
+      <div class="section-title">FinMind 股價來源（推薦）</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div style="font-size:14px;color:var(--muted,#94a3b8);margin-bottom:12px;line-height:1.7;">
+          設定 FinMind Token，<strong style="color:var(--text,#f1f5f9);">大幅提升股價更新穩定度</strong>。完全免費、台灣團隊製作、台股資料最完整。
+        </div>
+        <div style="margin-bottom:10px;">
+          <label class="form-label">FinMind API Token</label>
+          <div style="display:flex;gap:8px;">
+            <input type="password" class="form-input" id="finmind-token-input" placeholder="貼上你的 Token" style="flex:1;font-size:14px;">
+            <button class="btn btn-ghost btn-sm" style="width:60px;flex-shrink:0;" onclick="toggleFinmindVis()">顯示</button>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveFinmindToken()" style="margin-bottom:10px;">
+          <i class="fa-solid fa-key"></i> 儲存 Token
+        </button>
+        <button class="btn btn-ghost" onclick="testFinmind()" style="margin-bottom:10px;">
+          <i class="fa-solid fa-flask"></i> 測試連線
+        </button>
+        <div id="finmind-test-result" style="display:none;background:var(--bg,#0f172a);border-radius:10px;padding:12px;font-size:12px;word-break:break-all;margin-bottom:10px;"></div>
+        <div style="background:rgba(59,130,246,.08);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--muted,#94a3b8);line-height:1.7;">
+          📍 免費取得 Token：<br>
+          1. 開啟 <strong style="color:var(--blue,#3b82f6);">finmindtrade.com</strong><br>
+          2. 點右上「註冊」（用 Email 註冊即可）<br>
+          3. 登入後左側「會員中心」找到 API Token<br>
+          4. 複製後貼到上方欄位儲存<br>
+          <span style="color:rgba(148,163,184,.6);">每分鐘 60 次免費，個人使用綽綽有餘</span>
+        </div>
+      </div>
+
       <div class="section-title">AI 截圖判讀設定</div>
       <div class="card card-body" style="margin-bottom:12px;">
         <div style="font-size:14px;color:var(--muted,#94a3b8);margin-bottom:12px;line-height:1.7;">
@@ -743,6 +772,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if(!db.subs) db.subs=[];
   if(!db.budgets) db.budgets={};
   if(!db.geminiKey) db.geminiKey='';
+  if(!db.finmindToken) db.finmindToken='';
   if(!db.customCats) db.customCats=[];
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
@@ -778,7 +808,7 @@ function switchPage(name, tab) {
   tab.classList.add('active');
   document.getElementById('scroll-area').scrollTop = 0;
   const titles={dashboard:'💰 財富指揮官', stock:'📈 存股管理', cashflow:'💳 記帳', settings:'⚙️ 設定'};
-  if(name==='settings') setTimeout(loadGeminiKeyToInput, 50);
+  if(name==='settings') setTimeout(() => { loadGeminiKeyToInput(); loadFinmindTokenToInput(); }, 50);
   document.getElementById('header-title').textContent = titles[name]||'';
   if(name==='cashflow') renderExpenseChart();
   if(name==='stock') {
@@ -872,28 +902,62 @@ async function fetchAllPrices() {
   icon.className = 'fa-solid fa-arrows-rotate spin';
 
   let results = {};
-  let errorMessages = [];
+  let errors = [];
 
-  // 方法 1: TWSE OpenAPI - 收盤後價（CORS-friendly）
-  try {
-    const r = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-    if(r.ok) {
-      const list = await r.json();
-      syms.forEach(sym => {
-        const item = list.find(d => d.Code === sym);
-        if(item) {
-          const price = parseFloat((item.ClosingPrice || '').replace(/,/g, ''));
-          if(price && !isNaN(price)) results[sym] = price;
+  // ── 方法 1: FinMind API（主要來源 - 穩定且 CORS 友善）──
+  if(db.finmindToken) {
+    try {
+      // FinMind 用收盤價 - TaiwanStockPrice
+      const today = new Date();
+      // 取最近 7 天範圍以確保抓到最新交易日
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() - 7);
+      const startStr = startDate.toISOString().split('T')[0];
+
+      for(const sym of syms) {
+        try {
+          const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${sym}&start_date=${startStr}&token=${db.finmindToken}`;
+          const r = await fetch(url);
+          if(!r.ok){ errors.push(sym+' HTTP '+r.status); continue; }
+          const data = await r.json();
+          if(data.status === 200 && data.data && data.data.length) {
+            // 取最新一筆
+            const latest = data.data[data.data.length - 1];
+            const price = parseFloat(latest.close);
+            if(price && !isNaN(price)) results[sym] = price;
+          } else if(data.msg) {
+            errors.push(sym+': '+data.msg);
+          }
+        } catch(e) {
+          errors.push(sym+': '+e.message);
         }
-      });
-    } else {
-      errorMessages.push('TWSE OpenAPI 回傳 ' + r.status);
+      }
+    } catch(e) {
+      errors.push('FinMind 失敗: '+e.message);
     }
-  } catch(e) {
-    errorMessages.push('TWSE OpenAPI 失敗：' + e.message);
   }
 
-  // 方法 2: TWSE 上櫃 OpenAPI（OTC，例如創意 3443）
+  // ── 方法 2: TWSE OpenAPI 備援（無需 token）──
+  if(Object.keys(results).length < syms.length) {
+    try {
+      const r = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+      if(r.ok) {
+        const list = await r.json();
+        syms.forEach(sym => {
+          if(results[sym]) return;
+          const item = list.find(d => d.Code === sym);
+          if(item) {
+            const price = parseFloat((item.ClosingPrice || '').replace(/,/g, ''));
+            if(price && !isNaN(price)) results[sym] = price;
+          }
+        });
+      }
+    } catch(e) {
+      errors.push('TWSE OpenAPI: '+e.message);
+    }
+  }
+
+  // ── 方法 3: 上櫃 OpenAPI ──
   if(Object.keys(results).length < syms.length) {
     try {
       const r = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes');
@@ -909,29 +973,7 @@ async function fetchAllPrices() {
         });
       }
     } catch(e) {
-      errorMessages.push('上櫃 OpenAPI 失敗：' + e.message);
-    }
-  }
-
-  // 方法 3: 透過 corsproxy.io 取得 TWSE 即時報價
-  if(Object.keys(results).length < syms.length) {
-    try {
-      const missing = syms.filter(s => !results[s]);
-      const exCh = missing.map(s => 'tse_' + s + '.tw|otc_' + s + '.tw').join('|');
-      const targetUrl = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=' + exCh + '&json=1&delay=0';
-      const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl));
-      if(r.ok) {
-        const data = await r.json();
-        if(data && data.msgArray) {
-          data.msgArray.forEach(item => {
-            const sym = item.c;
-            const price = parseFloat(item.z || item.y);
-            if(sym && price && !isNaN(price)) results[sym] = price;
-          });
-        }
-      }
-    } catch(e) {
-      errorMessages.push('即時報價失敗：' + e.message);
+      errors.push('上櫃 API: '+e.message);
     }
   }
 
@@ -951,22 +993,27 @@ async function fetchAllPrices() {
 
   if(ok > 0) {
     badge.className = 'live-badge';
-    badge.innerHTML = '<span class="live-dot"></span> TWSE 即時';
+    const source = db.finmindToken ? 'FinMind' : 'TWSE';
+    badge.innerHTML = '<span class="live-dot"></span> '+source;
     if(timeEl) timeEl.textContent = '更新：' + now;
     if(missing.length === 0) {
       toast('✅ 已更新全部 ' + ok + ' 支股票');
     } else {
-      toast('✅ 更新 ' + ok + ' / ' + syms.length + ' 支　未找到：' + missing.join(','));
+      toast('✅ 更新 ' + ok + ' / ' + syms.length + ' 支，未找到：' + missing.join(','));
     }
   } else {
     badge.className = 'manual-badge';
     badge.innerHTML = '<span>⬤</span> 手動模式';
-    let msg = '⚠️ 無法取得報價\n\n可能原因：\n';
-    msg += '• 網路連線問題（試試切換 Wi-Fi 或行動網路）\n';
-    msg += '• 周末或非交易日（資料源未更新）\n';
-    msg += '• 股票代號錯誤\n\n';
-    if(errorMessages.length) {
-      msg += '技術細節：\n' + errorMessages.join('\n');
+    let msg = '⚠️ 無法取得股價\n\n';
+    if(!db.finmindToken) {
+      msg += '💡 建議：到「設定」頁面註冊免費 FinMind Token 以提升穩定性\n\n';
+    }
+    msg += '可能原因：\n';
+    msg += '• 網路問題（試試切換 Wi-Fi）\n';
+    msg += '• 周末或非交易日\n';
+    msg += '• 股票代號錯誤\n';
+    if(errors.length) {
+      msg += '\n技術細節：\n' + errors.slice(0,5).join('\n');
     }
     alert(msg);
   }
@@ -1574,6 +1621,59 @@ function toast(msg){
   _toastTimer=setTimeout(()=>el.classList.remove('show'),2500);
 }
 
+
+// ── FinMind Token management ─────────────────────────────
+function saveFinmindToken() {
+  const token = document.getElementById('finmind-token-input').value.trim();
+  if(!token) return toast('⚠️ 請輸入 Token');
+  db.finmindToken = token;
+  saveData();
+  toast('✅ FinMind Token 已儲存');
+}
+
+function toggleFinmindVis() {
+  const inp = document.getElementById('finmind-token-input');
+  const btn = inp.nextElementSibling;
+  if(inp.type === 'password') { inp.type = 'text'; btn.textContent = '隱藏'; }
+  else { inp.type = 'password'; btn.textContent = '顯示'; }
+}
+
+function loadFinmindTokenToInput() {
+  const inp = document.getElementById('finmind-token-input');
+  if(inp && db.finmindToken) inp.value = db.finmindToken;
+}
+
+async function testFinmind() {
+  const token = document.getElementById('finmind-token-input').value.trim() || db.finmindToken;
+  const resultEl = document.getElementById('finmind-test-result');
+  if(!token) { toast('⚠️ 請先輸入 Token'); return; }
+
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--muted,#94a3b8)';
+  resultEl.textContent = '測試中...';
+
+  try {
+    const today = new Date();
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const startStr = weekAgo.toISOString().split('T')[0];
+    const url = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=2330&start_date=${startStr}&token=${token}`;
+    const r = await fetch(url);
+    const data = await r.json();
+
+    if(data.status === 200 && data.data && data.data.length) {
+      const latest = data.data[data.data.length - 1];
+      resultEl.style.color = '#10b981';
+      resultEl.innerHTML = '✅ Token 有效！<br>測試查詢：台積電 (2330)<br>最新交易日 '+latest.date+'<br>收盤價 $'+latest.close;
+    } else {
+      resultEl.style.color = '#f87171';
+      resultEl.textContent = '❌ ' + (data.msg || '回傳資料異常，請確認 Token');
+    }
+  } catch(e) {
+    resultEl.style.color = '#f87171';
+    resultEl.textContent = '❌ 網路錯誤：' + e.message;
+  }
+}
 
 // ── Gemini Key management
 async function testGeminiKey() {
