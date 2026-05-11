@@ -421,8 +421,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <!-- ── Bottom Sheets ── -->
 <!-- AI report sheet -->
 <div class="sheet-overlay" id="sheet-ai-report" onclick="closeSheetOnBg(event,'sheet-ai-report')">
-  <div class="sheet" style="max-height:88vh;">
-    <div class="sheet-handle"></div>
+  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
+    <div class="sheet-handle" style="flex-shrink:0;"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div class="sheet-title" style="margin-bottom:0;">AI 消費分析報告</div>
       <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
@@ -453,9 +453,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
 
     <!-- Result state -->
-    <div id="ai-report-result" style="display:none;">
-      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;padding-bottom:12px;"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+    <div id="ai-report-result" style="display:none;flex:1;min-height:0;flex-direction:column;">
+      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:12px;padding-right:4px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;flex-shrink:0;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);">
         <button class="btn btn-ghost" onclick="runAiReport()">
           <i class="fa-solid fa-rotate-right"></i> 重新分析
         </button>
@@ -864,78 +864,114 @@ function doSell() {
 }
 
 async function fetchAllPrices() {
-  const syms=[...new Set(db.stock.map(s=>s.symbol))];
+  const syms = [...new Set(db.stock.map(s => s.symbol))];
   if(!syms.length) return toast('沒有持股');
-  const btn=document.getElementById('refresh-btn');
-  const icon=document.getElementById('refresh-icon');
-  btn.disabled=true; icon.className='fa-solid fa-arrows-rotate spin';
+  const btn = document.getElementById('refresh-btn');
+  const icon = document.getElementById('refresh-icon');
+  btn.disabled = true;
+  icon.className = 'fa-solid fa-arrows-rotate spin';
 
-  let ok=0, results={};
+  let results = {};
+  let errorMessages = [];
 
-  // ── 方法1：TWSE 官方即時 API（盤中最準）──
+  // 方法 1: TWSE OpenAPI - 收盤後價（CORS-friendly）
   try {
-    const exCh = syms.map(s=>`tse_${s}.tw`).join('|');
-    const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${exCh}&json=1&delay=0`;
-    const r = await fetch(url, {headers:{'Accept':'application/json'}});
-    const data = await r.json();
-    if(data?.msgArray?.length) {
-      data.msgArray.forEach(item => {
-        const sym = item.c;
-        const price = parseFloat(item.z || item.y);
-        if(sym && price && !isNaN(price)) { results[sym]=price; ok++; }
-      });
-    }
-  } catch(e){ console.log('TWSE mis failed:', e.message); }
-
-  // ── 方法2：TWSE OpenAPI（收盤後仍可用）──
-  if(ok < syms.length) {
-    try {
-      const r2 = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-      const list = await r2.json();
+    const r = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+    if(r.ok) {
+      const list = await r.json();
       syms.forEach(sym => {
-        if(results[sym]) return;
-        const item = list.find(d=>d.Code===sym);
+        const item = list.find(d => d.Code === sym);
         if(item) {
-          const price = parseFloat(item.ClosingPrice?.replace(/,/g,''));
-          if(price && !isNaN(price)) { results[sym]=price; ok++; }
+          const price = parseFloat((item.ClosingPrice || '').replace(/,/g, ''));
+          if(price && !isNaN(price)) results[sym] = price;
         }
       });
-    } catch(e){ console.log('TWSE openapi failed:', e.message); }
+    } else {
+      errorMessages.push('TWSE OpenAPI 回傳 ' + r.status);
+    }
+  } catch(e) {
+    errorMessages.push('TWSE OpenAPI 失敗：' + e.message);
   }
 
-  // ── 方法3：Yahoo Finance 備援 ──
-  if(ok < syms.length) {
-    for(const sym of syms) {
-      if(results[sym]) continue;
-      try {
-        const r3=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}.TW?interval=1d&range=1d`);
-        const d=await r3.json();
-        const p=d?.chart?.result?.[0]?.meta?.regularMarketPrice;
-        if(p){ results[sym]=p; ok++; }
-      } catch{}
+  // 方法 2: TWSE 上櫃 OpenAPI（OTC，例如創意 3443）
+  if(Object.keys(results).length < syms.length) {
+    try {
+      const r = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes');
+      if(r.ok) {
+        const list = await r.json();
+        syms.forEach(sym => {
+          if(results[sym]) return;
+          const item = list.find(d => d.SecuritiesCompanyCode === sym);
+          if(item) {
+            const price = parseFloat((item.Close || '').replace(/,/g, ''));
+            if(price && !isNaN(price)) results[sym] = price;
+          }
+        });
+      }
+    } catch(e) {
+      errorMessages.push('上櫃 OpenAPI 失敗：' + e.message);
+    }
+  }
+
+  // 方法 3: 透過 corsproxy.io 取得 TWSE 即時報價
+  if(Object.keys(results).length < syms.length) {
+    try {
+      const missing = syms.filter(s => !results[s]);
+      const exCh = missing.map(s => 'tse_' + s + '.tw|otc_' + s + '.tw').join('|');
+      const targetUrl = 'https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=' + exCh + '&json=1&delay=0';
+      const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl));
+      if(r.ok) {
+        const data = await r.json();
+        if(data && data.msgArray) {
+          data.msgArray.forEach(item => {
+            const sym = item.c;
+            const price = parseFloat(item.z || item.y);
+            if(sym && price && !isNaN(price)) results[sym] = price;
+          });
+        }
+      }
+    } catch(e) {
+      errorMessages.push('即時報價失敗：' + e.message);
     }
   }
 
   // 寫入結果
-  Object.entries(results).forEach(([sym,price])=>{ db.prices[sym]=price.toString(); });
+  Object.entries(results).forEach(([sym, price]) => {
+    db.prices[sym] = price.toString();
+  });
 
-  btn.disabled=false; icon.className='fa-solid fa-arrows-rotate';
+  btn.disabled = false;
+  icon.className = 'fa-solid fa-arrows-rotate';
 
-  const badge=document.getElementById('price-badge');
-  const timeEl=document.getElementById('last-update');
-  const now=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  const badge = document.getElementById('price-badge');
+  const timeEl = document.getElementById('last-update');
+  const now = new Date().toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit'});
+  const ok = Object.keys(results).length;
+  const missing = syms.filter(s => !results[s]);
 
-  if(ok>0){
-    badge.className='live-badge';
-    badge.innerHTML='<span class="live-dot"></span> TWSE 即時';
-    if(timeEl) timeEl.textContent='更新：'+now;
-    toast(`✅ 已更新 ${ok}/${syms.length} 支　${now}`);
+  if(ok > 0) {
+    badge.className = 'live-badge';
+    badge.innerHTML = '<span class="live-dot"></span> TWSE 即時';
+    if(timeEl) timeEl.textContent = '更新：' + now;
+    if(missing.length === 0) {
+      toast('✅ 已更新全部 ' + ok + ' 支股票');
+    } else {
+      toast('✅ 更新 ' + ok + ' / ' + syms.length + ' 支　未找到：' + missing.join(','));
+    }
   } else {
-    badge.className='manual-badge';
-    badge.innerHTML='<span>⬤</span> 手動模式';
-    toast('⚠️ 無法取得即時價，請確認網路或手動輸入');
+    badge.className = 'manual-badge';
+    badge.innerHTML = '<span>⬤</span> 手動模式';
+    let msg = '⚠️ 無法取得報價\n\n可能原因：\n';
+    msg += '• 網路連線問題（試試切換 Wi-Fi 或行動網路）\n';
+    msg += '• 周末或非交易日（資料源未更新）\n';
+    msg += '• 股票代號錯誤\n\n';
+    if(errorMessages.length) {
+      msg += '技術細節：\n' + errorMessages.join('\n');
+    }
+    alert(msg);
   }
-  saveData(); updateUI();
+  saveData();
+  updateUI();
 }
 
 // ── Expense / income ─────────────────────────────────────
@@ -1341,27 +1377,49 @@ async function handleCSV(input){
   for(let file of files){
     const ext = file.name.toLowerCase().split('.').pop();
     if(ext === 'numbers'){
-      warnings.push(`⚠️ Numbers 格式無法直接讀取`);
-      warnings.push(`請先在 Numbers App 點「檔案」→「轉存為」→「Excel」或「CSV」，再上傳轉換後的檔案。`);
+      warnings.push('⚠️ Numbers 格式無法直接讀取\n\n');
+      warnings.push('請先在 Numbers App 完成以下步驟：\n');
+      warnings.push('1. 點右上角「⋯」→「轉存」→「Excel」\n');
+      warnings.push('2. 改上傳產生的 .xlsx 檔案\n\n');
+      warnings.push('（直接從 Numbers 轉出的 .xlsx 比較完整，比 CSV 好）');
       continue;
     }
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, {type:'array', cellDates:true});
       let fileTrans = [];
+      let totalCells = 0;
       wb.SheetNames.forEach(n=>{
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, raw:false, dateNF:'yyyy-mm-dd'});
+        // Count non-empty cells across all rows
+        rows.forEach(r => { if(r) r.forEach(c => { if(c != null && c !== '') totalCells++; }); });
         const parsed = parseRows(rows, n);
         if(parsed.length) fileTrans = fileTrans.concat(parsed);
       });
+
       if(!fileTrans.length){
-        warnings.push(`⚠️ ${file.name}：未找到符合格式的資料`);
-        warnings.push(`格式需含「日期」與「金額」兩欄，類別欄位可選`);
+        if(totalCells < 5){
+          // Empty or near-empty file
+          warnings.push('⚠️ '+file.name+'：檔案幾乎沒有可讀的資料\n\n');
+          warnings.push('可能原因：\n');
+          warnings.push('• 從 Numbers 轉存時，內容沒有完整匯出（這是 Numbers 的常見問題）\n');
+          warnings.push('• 請改用以下方式之一：\n');
+          warnings.push('  ① 在 Numbers 內全選資料 → 複製 → 貼到 Google Sheets → 下載為 xlsx\n');
+          warnings.push('  ② 或在 App 內直接「記帳支出」逐筆輸入');
+        } else {
+          warnings.push('⚠️ '+file.name+'：找到資料但無法辨識格式\n\n');
+          warnings.push('需求：表格內必須有「日期」和「金額」兩個欄位（標題列裡含這些字）\n');
+          warnings.push('類別欄位可選，會自動歸類到對應預算\n\n');
+          warnings.push('範例格式：\n');
+          warnings.push('日期         金額    類別    備註\n');
+          warnings.push('2026-05-01   120     餐費    便當\n');
+          warnings.push('2026-05-02   85      交通    捷運');
+        }
       } else {
         allTrans = allTrans.concat(fileTrans);
       }
     } catch(err){
-      warnings.push(`❌ ${file.name}：讀取失敗 - ${err.message}`);
+      warnings.push('❌ '+file.name+'：讀取失敗 - '+err.message);
     }
   }
 
@@ -1684,7 +1742,7 @@ async function runAiReport() {
 
     clearInterval(loadingTimer);
     document.getElementById('ai-report-loading').style.display = 'none';
-    document.getElementById('ai-report-result').style.display = 'block';
+    document.getElementById('ai-report-result').style.display = 'flex';
     document.getElementById('ai-report-content').textContent = text;
 
   } catch(err) {
