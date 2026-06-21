@@ -293,7 +293,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <i class="fa-solid fa-brain"></i> AI 分析本月消費
       </button>
       <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;margin-bottom:12px;" onclick="openSheet('cc-ocr')">
-        <i class="fa-solid fa-credit-card"></i> 信用卡帳單截圖匯入
+        <i class="fa-solid fa-camera"></i> 多筆消費截圖匯入
       </button>
 
       <!-- Fixed expenses -->
@@ -529,25 +529,32 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="sheet-overlay" id="sheet-cc-ocr" onclick="closeSheetOnBg(event,'sheet-cc-ocr')">
   <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
-    <div class="sheet-title" style="flex-shrink:0;">💳 信用卡帳單截圖匯入</div>
-    <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.7;flex-shrink:0;">
-      上傳多張帳單截圖，AI 自動辨識每筆消費的日期、店家、金額，並智能歸類後一次匯入。
+    <div class="sheet-title" style="flex-shrink:0;">📸 多筆消費截圖匯入</div>
+    <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.6;flex-shrink:0;">
+      支援：信用卡帳單、Line Pay 交易紀錄、通知中心。可連續上傳多張，AI 自動辨識並去除重複。
     </div>
 
     <!-- Idle state -->
     <div id="cc-idle" style="flex-shrink:0;">
       <div id="cc-card-info" style="background:var(--bg3,#334155);border-radius:14px;padding:14px;margin-bottom:14px;">
-        <label class="form-label">這次帳單是哪張卡？</label>
-        <input type="text" class="form-input" id="cc-card-name" placeholder="例：國泰 CUBE、玉山 Pi 卡">
+        <label class="form-label">支付方式（標記在備註欄）</label>
+        <input type="text" class="form-input" id="cc-card-name" placeholder="例：Line Pay、國泰 CUBE、玉山 Pi 卡">
         <label class="form-label" style="margin-top:8px;">扣款帳戶</label>
         <select class="form-select" id="cc-account"></select>
+        <div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:8px;line-height:1.5;">
+          💡 Line Pay 的款項實際從綁定的信用卡或銀行扣款<br>
+          請選對應的扣款來源（如：國泰交割、台新 Richart）
+        </div>
       </div>
 
       <div onclick="document.getElementById('cc-file').click()"
         style="border:2px dashed rgba(8,145,178,.4);border-radius:14px;padding:28px 20px;text-align:center;cursor:pointer;margin-bottom:14px;">
         <i class="fa-solid fa-cloud-arrow-up" style="font-size:32px;color:#0891b2;margin-bottom:10px;display:block;"></i>
-        <div style="font-size:15px;font-weight:600;color:var(--text);">點擊上傳帳單截圖</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:4px;">可一次選多張，AI 會逐張辨識</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">點擊上傳截圖</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">
+          可一次選 1-20 張，AI 逐張辨識<br>
+          <span style="color:rgba(148,163,184,.6);">支援連續滑動截圖、會自動去除重複</span>
+        </div>
       </div>
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
     </div>
@@ -2220,7 +2227,9 @@ async function handleCcUpload(input) {
   document.getElementById('cc-idle').style.display = 'none';
   document.getElementById('cc-error').style.display = 'none';
   document.getElementById('cc-loading').style.display = 'block';
-  ccParsedItems = [];
+
+  let allItems = [];
+  let errorCount = 0;
 
   for(let i = 0; i < files.length; i++) {
     const file = files[i];
@@ -2230,17 +2239,56 @@ async function handleCcUpload(input) {
     try {
       const base64 = await fileToBase64(file);
       const items = await callGeminiCcOcr(base64, file.type, cardName);
-      ccParsedItems = ccParsedItems.concat(items);
+      allItems = allItems.concat(items);
     } catch(err) {
+      errorCount++;
       console.warn('Screenshot', i+1, 'failed:', err.message);
     }
   }
+
+  // ── Normalize dates: fill in current year if missing, parse "MM-DD" formats ──
+  const currentYear = new Date().getFullYear();
+  allItems.forEach(it => {
+    if(!it.date) return;
+    const d = String(it.date).trim();
+    // "MM-DD" or "M/D" without year - assume current year (or last year if month > current month)
+    const m = d.match(/^(\d{1,2})[-\/](\d{1,2})$/);
+    if(m) {
+      const month = parseInt(m[1]);
+      const day = parseInt(m[2]);
+      const now = new Date();
+      // If month is in the future, it must be last year
+      const year = month > now.getMonth() + 1 ? currentYear - 1 : currentYear;
+      it.date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    }
+  });
+
+  // ── Smart deduplication: same date + merchant + amount = duplicate ──
+  const seen = new Map();
+  let dupCount = 0;
+  ccParsedItems = [];
+  allItems.forEach(it => {
+    const key = `${it.date}|${(it.merchant||'').trim()}|${it.amount}`;
+    if(seen.has(key)) {
+      dupCount++;
+      return;
+    }
+    seen.set(key, true);
+    ccParsedItems.push(it);
+  });
 
   document.getElementById('cc-progress-bar').style.width = '100%';
   document.getElementById('cc-loading').style.display = 'none';
   document.getElementById('cc-results').style.display = 'flex';
 
   renderCcResults();
+
+  // Show summary toast
+  let msg = '✅ 辨識完成';
+  if(dupCount > 0) msg += '（自動去除 ' + dupCount + ' 筆重複）';
+  if(errorCount > 0) msg += '，' + errorCount + ' 張處理失敗';
+  toast(msg);
+
   input.value = '';
 }
 
@@ -2254,27 +2302,37 @@ function fileToBase64(file) {
 }
 
 async function callGeminiCcOcr(base64, mediaType, cardName) {
-  const prompt = `這是一張台灣信用卡帳單截圖。請辨識所有的「消費明細」交易紀錄（不要包括繳款資訊、年費、優惠折抵），用純 JSON 格式回覆，不要有任何其他文字：
+  const prompt = `這是一張台灣記帳相關截圖，可能是：
+（A）信用卡帳單明細
+（B）Line Pay / 街口 / 全支付的交易紀錄
+（C）iPhone 通知中心顯示的多筆支付通知
+（D）其他電子支付的消費明細
+
+請辨識所有的「消費交易」（排除：繳款、退款回沖、優惠折抵、紅利點數、未確認交易、即將扣款），以純 JSON 格式回覆，不要有任何其他文字：
 [
-  {"date":"消費日期 YYYY-MM-DD","merchant":"商家名稱","amount":金額數字,"category":"自動歸類"},
-  ...
+  {"date":"消費日期 YYYY-MM-DD","merchant":"商家名稱","amount":金額數字,"category":"自動歸類"}
 ]
 
-歸類規則（category 必須是以下其中之一）：
-- 餐費：餐廳、咖啡、超商、外送、飲料、便當、麵店、火鍋、燒烤等
-- 交通：加油站、停車、計程車、Uber、捷運、高鐵、台鐵、客運、機票等
-- 購物：百貨、3C、服飾、美妝、網購、蝦皮、momo、家樂福等日用品店
-- 娛樂：電影、遊戲、KTV、旅遊、住宿、票券、訂閱遊戲等
-- 醫療：診所、醫院、藥局、保健、健檢、口腔等
-- 住房：房租、水費、電費、瓦斯、管理費、家具、家電等
-- 訂閱：Netflix、Spotify、YouTube、Apple、Google、iCloud、ChatGPT、軟體月費等
-- 其他：無法明確歸類的
+日期判斷規則：
+- 如果只看到月日（例如 11/15），日期格式用 "MM-DD"，年份留空
+- 如果完全沒日期，date 留空字串
+- 通知中心截圖通常會顯示「剛剛」「2小時前」這類，請推算成今天日期
 
-重要提示：
+歸類規則（category 必須是以下其中之一）：
+- 餐費：餐廳、咖啡、超商、外送、飲料、便當、麵店、火鍋、燒烤
+- 交通：加油站、停車、計程車、Uber、高鐵、台鐵、客運、機票、悠遊卡儲值
+- 購物：百貨、3C、服飾、美妝、網購、蝦皮、momo、家樂福、好市多、藥妝
+- 娛樂：電影、遊戲、KTV、旅遊、住宿、票券、Steam
+- 醫療：診所、醫院、藥局、保健、健檢
+- 住房：房租、水電瓦斯、管理費、家具、家電、網路、第四台
+- 訂閱：Netflix、Spotify、YouTube、Apple、Google、iCloud、ChatGPT、軟體月費
+- 其他：無法明確歸類
+
+重要：
 - 金額不要有逗號，純數字
 - 商家名稱保留原始中英文
-- 如果某筆無法辨識某欄位，可以留空字串
-- 退款（負數）也要列出，金額為負數`;
+- 退款用負數金額表示
+- 如果是 Line Pay 通知（例如「Line Pay 已支付 $120 給全家便利商店」），merchant 用「全家便利商店」`;
 
   const model = db.geminiModel || 'gemini-2.0-flash-exp';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
