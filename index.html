@@ -289,8 +289,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <button class="btn btn-red" onclick="openSheet('expense')"><i class="fa-solid fa-minus"></i> 記帳支出</button>
         <button class="btn btn-green" onclick="openSheet('income')"><i class="fa-solid fa-plus"></i> 新增收入</button>
       </div>
-      <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;margin-bottom:12px;" onclick="openSheet('ai-report')">
+      <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;margin-bottom:10px;" onclick="openSheet('ai-report')">
         <i class="fa-solid fa-brain"></i> AI 分析本月消費
+      </button>
+      <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;margin-bottom:12px;" onclick="openSheet('cc-ocr')">
+        <i class="fa-solid fa-credit-card"></i> 信用卡帳單截圖匯入
       </button>
 
       <!-- Fixed expenses -->
@@ -518,6 +521,64 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         把「咖啡」、「外食」等自動歸類到「餐費」<br>合併同樣意思但寫法不同的類別
       </div>
     </div>
+  </div>
+</div>
+
+
+<!-- Credit Card Statement OCR -->
+<div class="sheet-overlay" id="sheet-cc-ocr" onclick="closeSheetOnBg(event,'sheet-cc-ocr')">
+  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
+    <div class="sheet-handle" style="flex-shrink:0;"></div>
+    <div class="sheet-title" style="flex-shrink:0;">💳 信用卡帳單截圖匯入</div>
+    <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.7;flex-shrink:0;">
+      上傳多張帳單截圖，AI 自動辨識每筆消費的日期、店家、金額，並智能歸類後一次匯入。
+    </div>
+
+    <!-- Idle state -->
+    <div id="cc-idle" style="flex-shrink:0;">
+      <div id="cc-card-info" style="background:var(--bg3,#334155);border-radius:14px;padding:14px;margin-bottom:14px;">
+        <label class="form-label">這次帳單是哪張卡？</label>
+        <input type="text" class="form-input" id="cc-card-name" placeholder="例：國泰 CUBE、玉山 Pi 卡">
+        <label class="form-label" style="margin-top:8px;">扣款帳戶</label>
+        <select class="form-select" id="cc-account"></select>
+      </div>
+
+      <div onclick="document.getElementById('cc-file').click()"
+        style="border:2px dashed rgba(8,145,178,.4);border-radius:14px;padding:28px 20px;text-align:center;cursor:pointer;margin-bottom:14px;">
+        <i class="fa-solid fa-cloud-arrow-up" style="font-size:32px;color:#0891b2;margin-bottom:10px;display:block;"></i>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">點擊上傳帳單截圖</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">可一次選多張，AI 會逐張辨識</div>
+      </div>
+      <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
+    </div>
+
+    <!-- Loading state -->
+    <div id="cc-loading" style="display:none;text-align:center;padding:32px 0;flex-shrink:0;">
+      <div style="font-size:32px;margin-bottom:12px;">🔍</div>
+      <div style="font-size:15px;font-weight:500;margin-bottom:6px;">AI 辨識中...</div>
+      <div style="font-size:13px;color:var(--muted,#94a3b8);" id="cc-loading-text">處理第 1 張截圖</div>
+      <div style="margin-top:14px;background:var(--bg3,#334155);border-radius:99px;height:6px;overflow:hidden;max-width:240px;margin-left:auto;margin-right:auto;">
+        <div id="cc-progress-bar" style="height:100%;background:linear-gradient(90deg,#0891b2,#7c3aed);width:0%;transition:width .3s;"></div>
+      </div>
+    </div>
+
+    <!-- Results (scrollable) -->
+    <div id="cc-results" style="display:none;flex:1;min-height:0;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0;">
+        <span style="font-size:13px;font-weight:600;color:var(--muted,#94a3b8);">辨識結果（可編輯後匯入）</span>
+        <span id="cc-summary" style="font-size:12px;color:var(--muted,#94a3b8);"></span>
+      </div>
+      <div id="cc-result-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:4px;padding-bottom:8px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);flex-shrink:0;">
+        <button class="btn btn-ghost" onclick="closeSheet('cc-ocr')">取消</button>
+        <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;" onclick="importCcData()">
+          <i class="fa-solid fa-file-import"></i> 確認匯入
+        </button>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="cc-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);margin-bottom:14px;flex-shrink:0;"></div>
   </div>
 </div>
 
@@ -829,6 +890,7 @@ function openSheet(name) {
   if(name==='budget') { openBudgetSheet(); }
   if(name==='ai-report') { openAiReportSheet(); }
   if(name==='custom-cat') { openCustomCatSheet(); }
+  if(name==='cc-ocr') { openCcOcrSheet(); }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
 }
@@ -2122,6 +2184,214 @@ function saveBudgets() {
   renderBudgetBars();
   closeSheet('budget');
   toast('✅ 預算已儲存');
+}
+
+
+// ── Credit Card Statement OCR ─────────────────────────────
+let ccParsedItems = [];
+
+function openCcOcrSheet() {
+  // Populate accounts
+  const sel = document.getElementById('cc-account');
+  if(sel) sel.innerHTML = db.assets.map(a => `<option value="${a.id}">${a.name}${a.isDelivery?' ★':''}</option>`).join('');
+
+  // Reset states
+  document.getElementById('cc-idle').style.display = 'block';
+  document.getElementById('cc-loading').style.display = 'none';
+  document.getElementById('cc-results').style.display = 'none';
+  document.getElementById('cc-error').style.display = 'none';
+  document.getElementById('cc-result-list').innerHTML = '';
+  ccParsedItems = [];
+}
+
+async function handleCcUpload(input) {
+  const files = Array.from(input.files);
+  if(!files.length) return;
+
+  if(!db.geminiKey) {
+    document.getElementById('cc-error').style.display = 'block';
+    document.getElementById('cc-error').textContent = '⚠️ 尚未設定 Gemini API Key，請先到「設定」頁面輸入';
+    input.value = '';
+    return;
+  }
+
+  const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
+
+  document.getElementById('cc-idle').style.display = 'none';
+  document.getElementById('cc-error').style.display = 'none';
+  document.getElementById('cc-loading').style.display = 'block';
+  ccParsedItems = [];
+
+  for(let i = 0; i < files.length; i++) {
+    const file = files[i];
+    document.getElementById('cc-loading-text').textContent = `處理第 ${i+1} / ${files.length} 張截圖`;
+    document.getElementById('cc-progress-bar').style.width = ((i+0.5)/files.length*100) + '%';
+
+    try {
+      const base64 = await fileToBase64(file);
+      const items = await callGeminiCcOcr(base64, file.type, cardName);
+      ccParsedItems = ccParsedItems.concat(items);
+    } catch(err) {
+      console.warn('Screenshot', i+1, 'failed:', err.message);
+    }
+  }
+
+  document.getElementById('cc-progress-bar').style.width = '100%';
+  document.getElementById('cc-loading').style.display = 'none';
+  document.getElementById('cc-results').style.display = 'flex';
+
+  renderCcResults();
+  input.value = '';
+}
+
+function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = e => res(e.target.result.split(',')[1]);
+    reader.onerror = () => rej(new Error('讀取失敗'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function callGeminiCcOcr(base64, mediaType, cardName) {
+  const prompt = `這是一張台灣信用卡帳單截圖。請辨識所有的「消費明細」交易紀錄（不要包括繳款資訊、年費、優惠折抵），用純 JSON 格式回覆，不要有任何其他文字：
+[
+  {"date":"消費日期 YYYY-MM-DD","merchant":"商家名稱","amount":金額數字,"category":"自動歸類"},
+  ...
+]
+
+歸類規則（category 必須是以下其中之一）：
+- 餐費：餐廳、咖啡、超商、外送、飲料、便當、麵店、火鍋、燒烤等
+- 交通：加油站、停車、計程車、Uber、捷運、高鐵、台鐵、客運、機票等
+- 購物：百貨、3C、服飾、美妝、網購、蝦皮、momo、家樂福等日用品店
+- 娛樂：電影、遊戲、KTV、旅遊、住宿、票券、訂閱遊戲等
+- 醫療：診所、醫院、藥局、保健、健檢、口腔等
+- 住房：房租、水費、電費、瓦斯、管理費、家具、家電等
+- 訂閱：Netflix、Spotify、YouTube、Apple、Google、iCloud、ChatGPT、軟體月費等
+- 其他：無法明確歸類的
+
+重要提示：
+- 金額不要有逗號，純數字
+- 商家名稱保留原始中英文
+- 如果某筆無法辨識某欄位，可以留空字串
+- 退款（負數）也要列出，金額為負數`;
+
+  const model = db.geminiModel || 'gemini-2.0-flash-exp';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: mediaType, data: base64 } },
+          { text: prompt }
+        ]
+      }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 2000 }
+    })
+  });
+
+  if(!r.ok) {
+    const err = await r.json().catch(()=>({}));
+    throw new Error(err.error?.message || 'HTTP '+r.status);
+  }
+
+  const data = await r.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  if(!text) throw new Error('未回傳結果');
+  const clean = text.replace(/```json|```/g, '').trim();
+  const items = JSON.parse(clean);
+
+  // Add cardName as note to each item
+  return items.map(it => ({...it, _cardName: cardName}));
+}
+
+function renderCcResults() {
+  const list = document.getElementById('cc-result-list');
+  const summary = document.getElementById('cc-summary');
+
+  if(!ccParsedItems.length) {
+    list.innerHTML = '<div style="text-align:center;padding:24px 16px;color:var(--muted,#94a3b8);font-size:14px;">未辨識到任何交易，請嘗試更清晰的截圖</div>';
+    summary.textContent = '';
+    return;
+  }
+
+  // Sort by date desc
+  ccParsedItems.sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+  const total = ccParsedItems.reduce((s,it) => s + (parseFloat(it.amount)||0), 0);
+  summary.textContent = `共 ${ccParsedItems.length} 筆 · $${Math.round(total).toLocaleString()}`;
+
+  list.innerHTML = ccParsedItems.map((it, i) => {
+    const emoji = CAT_EMOJIS[it.category] || '🏷️';
+    const catOpts = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他']
+      .map(c => `<option value="${c}"${c===it.category?' selected':''}>${CAT_EMOJIS[c]||'🏷️'} ${c}</option>`).join('');
+    return `<div style="background:var(--card,#1e293b);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
+        <div style="flex:1;min-width:0;">
+          <input type="text" value="${it.merchant||''}" placeholder="店家"
+            style="width:100%;background:transparent;border:none;color:var(--text,#f1f5f9);font-size:14px;font-weight:500;padding:0;outline:none;"
+            onchange="ccParsedItems[${i}].merchant=this.value">
+          <input type="date" value="${it.date||''}"
+            style="background:transparent;border:none;color:var(--muted,#94a3b8);font-size:12px;padding:2px 0;outline:none;font-family:inherit;"
+            onchange="ccParsedItems[${i}].date=this.value">
+        </div>
+        <button onclick="ccParsedItems.splice(${i},1);renderCcResults();" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 100px;gap:8px;">
+        <select onchange="ccParsedItems[${i}].category=this.value"
+          style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;">
+          ${catOpts}
+        </select>
+        <input type="number" value="${it.amount||0}" step="1"
+          style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:14px;font-weight:600;text-align:right;"
+          onchange="ccParsedItems[${i}].amount=parseFloat(this.value)||0">
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function importCcData() {
+  if(!ccParsedItems.length) {
+    toast('沒有可匯入的資料');
+    return;
+  }
+  const accId = parseInt(document.getElementById('cc-account').value);
+  const account = db.assets.find(a => a.id === accId);
+  if(!account) {
+    toast('⚠️ 請選擇扣款帳戶');
+    return;
+  }
+  const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
+
+  let added = 0, totalAmt = 0;
+  const keys = new Set(db.expenses.map(e => `${e.date}|${e.amount}|${e.category}`));
+
+  ccParsedItems.forEach(it => {
+    const amt = parseFloat(it.amount) || 0;
+    if(amt === 0 || !it.date) return;
+    const key = `${it.date}|${amt}|${it.category}`;
+    if(keys.has(key)) return;
+    db.expenses.push({
+      id: Date.now() + Math.random(),
+      date: it.date,
+      amount: amt,
+      category: it.category || '其他',
+      paymentMethod: cardName,
+      note: it.merchant || ''
+    });
+    keys.add(key);
+    if(amt > 0) account.balance -= amt;
+    else account.balance -= amt; // negative amt becomes positive balance (refund)
+    added++;
+    totalAmt += amt;
+  });
+
+  saveData();
+  updateUI();
+  closeSheet('cc-ocr');
+  toast(`✅ 已匯入 ${added} 筆 (${cardName})，共 $${Math.round(totalAmt).toLocaleString()}`);
 }
 
 // ── OCR: Screenshot AI import ─────────────────────────────
