@@ -290,7 +290,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <button class="btn btn-green" onclick="openSheet('income')"><i class="fa-solid fa-plus"></i> 新增收入</button>
       </div>
       <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;margin-bottom:10px;" onclick="openSheet('ai-report')">
-        <i class="fa-solid fa-brain"></i> AI 分析本月消費
+        <i class="fa-solid fa-brain"></i> AI 月度財務體檢
       </button>
       <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;margin-bottom:12px;" onclick="openSheet('cc-ocr')">
         <i class="fa-solid fa-camera"></i> 多筆消費截圖匯入
@@ -456,7 +456,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <div class="sheet-title" style="margin-bottom:0;">AI 消費分析報告</div>
+      <div class="sheet-title" style="margin-bottom:0;">AI 月度財務體檢</div>
       <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
     </div>
 
@@ -464,9 +464,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div id="ai-report-idle">
       <div style="background:var(--bg3,#334155);border-radius:14px;padding:16px;margin-bottom:16px;">
         <div style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.8;">
-          AI 會分析你本月的：<br>
-          🧾 各類別支出比例 &nbsp;·&nbsp; 📈 與上月比較<br>
-          💡 節省建議 &nbsp;·&nbsp; 🎯 下個月預算規劃
+          AI 會做完整分析：<br>
+          💰 收入結構 &nbsp;·&nbsp; 💸 支出體檢<br>
+          📊 儲蓄率診斷 &nbsp;·&nbsp; 🔥 FIRE 進度<br>
+          🎯 具體行動建議
         </div>
       </div>
       <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;" onclick="runAiReport()">
@@ -553,7 +554,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div style="font-size:15px;font-weight:600;color:var(--text);">點擊上傳截圖</div>
         <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">
           可一次選 1-20 張，AI 逐張辨識<br>
-          <span style="color:rgba(148,163,184,.6);">支援連續滑動截圖、會自動去除重複</span>
+          <span style="color:rgba(148,163,184,.6);">支援連續滑動截圖、自動去除重複<br>超過 14 張會自動分批，避免超出免費額度</span>
         </div>
       </div>
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
@@ -1833,51 +1834,93 @@ async function runAiReport() {
     return d.toISOString().slice(0,7);
   })();
 
-  // Build this month's data
-  const thisMonth = db.expenses.filter(e => e.amount>0 && e.date.startsWith(ym));
-  const lastMonth = db.expenses.filter(e => e.amount>0 && e.date.startsWith(prevYm));
+  // ── Expenses ──
+  const thisExp = db.expenses.filter(e => e.amount>0 && e.date.startsWith(ym));
+  const lastExp = db.expenses.filter(e => e.amount>0 && e.date.startsWith(prevYm));
+  const thisExpMap = {}, lastExpMap = {};
+  thisExp.forEach(e => thisExpMap[e.category] = (thisExpMap[e.category]||0) + e.amount);
+  lastExp.forEach(e => lastExpMap[e.category] = (lastExpMap[e.category]||0) + e.amount);
+  const thisExpTotal = Object.values(thisExpMap).reduce((a,b)=>a+b,0);
+  const lastExpTotal = Object.values(lastExpMap).reduce((a,b)=>a+b,0);
 
-  if(thisMonth.length === 0) {
+  // ── Income ──
+  const thisIncome = (db.incomes||[]).filter(i => i.date.startsWith(ym));
+  const lastIncome = (db.incomes||[]).filter(i => i.date.startsWith(prevYm));
+  const thisIncMap = {}, lastIncMap = {};
+  thisIncome.forEach(i => thisIncMap[i.source||'其他'] = (thisIncMap[i.source||'其他']||0) + i.amount);
+  lastIncome.forEach(i => lastIncMap[i.source||'其他'] = (lastIncMap[i.source||'其他']||0) + i.amount);
+  const thisIncTotal = Object.values(thisIncMap).reduce((a,b)=>a+b,0);
+  const lastIncTotal = Object.values(lastIncMap).reduce((a,b)=>a+b,0);
+
+  // Check we have any data
+  if(thisExp.length === 0 && thisIncome.length === 0) {
     document.getElementById('ai-report-error').style.display = 'block';
-    document.getElementById('ai-report-error').textContent = '⚠️ 本月還沒有支出紀錄，記幾筆帳後再試試！';
+    document.getElementById('ai-report-error').textContent = '⚠️ 本月還沒有任何收支紀錄，記幾筆帳後再試試！';
     return;
   }
 
-  // Aggregate by category
-  const thisMap = {}, lastMap = {};
-  thisMonth.forEach(e => thisMap[e.category] = (thisMap[e.category]||0) + e.amount);
-  lastMonth.forEach(e => lastMap[e.category] = (lastMap[e.category]||0) + e.amount);
-  const thisTotal = Object.values(thisMap).reduce((a,b)=>a+b,0);
-  const lastTotal = Object.values(lastMap).reduce((a,b)=>a+b,0);
+  // ── Savings rate ──
+  const thisSavings = thisIncTotal - thisExpTotal;
+  const thisSavingsRate = thisIncTotal > 0 ? (thisSavings / thisIncTotal * 100).toFixed(1) : 'N/A';
+  const lastSavings = lastIncTotal - lastExpTotal;
+  const lastSavingsRate = lastIncTotal > 0 ? (lastSavings / lastIncTotal * 100).toFixed(1) : 'N/A';
 
-  // Build budget info
-  const budgetInfo = db.budgets && Object.keys(db.budgets).length
-    ? Object.entries(db.budgets).map(([cat,lim])=>`${cat}預算$${lim}`).join('、')
-    : '尚未設定預算';
-
-  // Build prompt
-  const catLines = Object.entries(thisMap)
-    .sort((a,b)=>b[1]-a[1])
-    .map(([cat,amt])=>'  '+cat+'：$'+Math.round(amt).toLocaleString()+'（'+(amt/thisTotal*100).toFixed(1)+'%）')
-    .join('\n');
+  // ── Net worth ──
   const stockMkt = Math.round(Object.entries(db.prices).reduce((sum,[sym,p])=>{
     const shares = db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
     return sum + shares*(parseFloat(p)||0);
   },0));
   const cashBal = Math.round(db.assets.reduce((a,b)=>a+b.balance,0));
-  const lastMonthStr = lastTotal>0 ? '$'+Math.round(lastTotal).toLocaleString() : '無資料';
-  const prompt = '你是一位親切的個人財務顧問，請用繁體中文分析以下消費資料，並給出實用建議。\n\n'
-    +'【本月（'+ym+'）支出明細】\n總計：$'+Math.round(thisTotal).toLocaleString()+'\n'+catLines+'\n\n'
-    +'【上月（'+prevYm+'）總支出】\n'+lastMonthStr+'\n\n'
-    +'【預算設定】\n'+budgetInfo+'\n\n'
-    +'【淨資產概況】\n股票市值約 $'+stockMkt.toLocaleString()+'，現金 $'+cashBal.toLocaleString()+'\n\n'
-    +'請依序提供：\n'
-    +'1. 本月消費總評（2-3句，語氣輕鬆正面）\n'
-    +'2. 各類別分析（哪些類別偏高、是否符合預算）\n'
-    +'3. 與上月比較（增減多少）\n'
-    +'4. 3個具體節省建議（針對比例最高的類別給出可執行方法）\n'
-    +'5. 下個月建議預算金額\n\n'
-    +'請用表情符號，語氣像朋友聊天，不要太正式。';
+  const netWorth = stockMkt + cashBal;
+
+  // ── FIRE progress ──
+  const fireTarget = (db.fireGoal || 300000) * 25;
+  const firePct = (netWorth / fireTarget * 100).toFixed(1);
+
+  // ── Build data strings ──
+  const expCatLines = Object.entries(thisExpMap)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([cat,amt])=>'  '+cat+'：$'+Math.round(amt).toLocaleString()+'（'+(amt/thisExpTotal*100).toFixed(1)+'%）')
+    .join('\n') || '  (無)';
+  const incLines = Object.entries(thisIncMap)
+    .sort((a,b)=>b[1]-a[1])
+    .map(([src,amt])=>'  '+src+'：$'+Math.round(amt).toLocaleString())
+    .join('\n') || '  (無)';
+  const budgetInfo = db.budgets && Object.keys(db.budgets).length
+    ? Object.entries(db.budgets).filter(([,v])=>v>0).map(([cat,lim])=>cat+'預算$'+lim).join('、')
+    : '尚未設定預算';
+
+  // Determine savings rate health
+  let healthScore = '';
+  if(thisIncTotal > 0) {
+    const rate = parseFloat(thisSavingsRate);
+    if(rate >= 30) healthScore = '優秀（FIRE 體質）';
+    else if(rate >= 20) healthScore = '健康';
+    else if(rate >= 10) healthScore = '一般';
+    else if(rate >= 0) healthScore = '偏低';
+    else healthScore = '入不敷出，需注意';
+  }
+
+  const prompt = '你是專業的個人財務顧問，請用繁體中文做月度財務體檢，給出實用建議。\n\n'
+    + '【本月（'+ym+'）財務數據】\n'
+    + '收入總計：$'+Math.round(thisIncTotal).toLocaleString()+'\n'+incLines+'\n\n'
+    + '支出總計：$'+Math.round(thisExpTotal).toLocaleString()+'\n'+expCatLines+'\n\n'
+    + '儲蓄金額：$'+Math.round(thisSavings).toLocaleString()+'\n'
+    + '儲蓄率：'+thisSavingsRate+'%'+(healthScore?'（'+healthScore+'）':'')+'\n\n'
+    + '【上月（'+prevYm+'）對照】\n'
+    + '收入：$'+Math.round(lastIncTotal).toLocaleString()+'  支出：$'+Math.round(lastExpTotal).toLocaleString()+'  儲蓄率：'+lastSavingsRate+'%\n\n'
+    + '【整體資產】\n'
+    + '股票市值 $'+stockMkt.toLocaleString()+'　現金 $'+cashBal.toLocaleString()+'　淨資產 $'+netWorth.toLocaleString()+'\n'
+    + 'FIRE 目標 $'+fireTarget.toLocaleString()+'（已達 '+firePct+'%）\n\n'
+    + '【預算設定】\n'+budgetInfo+'\n\n'
+    + '請依序給出（用 emoji 開頭分段，語氣像朋友聊天）：\n\n'
+    + '💼 1. 本月總評（3-4句，講儲蓄率水準和整體狀況）\n\n'
+    + '💰 2. 收入分析（穩定度、是否成長、是否有副業空間）\n\n'
+    + '💸 3. 支出體檢（哪些類別偏高、是否符合預算、與上月差異最大的）\n\n'
+    + '📊 4. 儲蓄率診斷（跟上月比、跟標竿 20% 比、健康度）\n\n'
+    + '🎯 5. 三個具體行動建議（針對最大問題給可執行方法）\n\n'
+    + '🔥 6. FIRE 進度更新（按目前儲蓄速度推估還要幾年）\n\n'
+    + '請用實際數字佐證，建議要具體可執行（例如「減少訂閱費 $500」而非「節省開支」）。';
 
   // Show loading
   document.getElementById('ai-report-idle').style.display = 'none';
@@ -1885,7 +1928,6 @@ async function runAiReport() {
   document.getElementById('ai-report-loading').style.display = 'block';
   document.getElementById('ai-report-result').style.display = 'none';
 
-  // Animate loading text
   let msgIdx = 0;
   const loadingTimer = setInterval(() => {
     msgIdx = (msgIdx+1) % LOADING_MSGS.length;
@@ -1901,7 +1943,7 @@ async function runAiReport() {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1200 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 1800 }
       })
     });
     const data = await r.json();
@@ -2230,9 +2272,21 @@ async function handleCcUpload(input) {
 
   let allItems = [];
   let errorCount = 0;
+  const BATCH_SIZE = 13; // Stay under 15/min rate limit with safety margin
+  const COOLDOWN_MS = 62000; // 62 seconds cooldown between batches
 
   for(let i = 0; i < files.length; i++) {
     const file = files[i];
+
+    // ── Rate limit protection: cooldown between batches ──
+    if(i > 0 && i % BATCH_SIZE === 0) {
+      const remaining = files.length - i;
+      for(let s = 60; s > 0; s--) {
+        document.getElementById('cc-loading-text').textContent = `避免超出 API 額度，等待 ${s} 秒...（剩 ${remaining} 張）`;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+
     document.getElementById('cc-loading-text').textContent = `處理第 ${i+1} / ${files.length} 張截圖`;
     document.getElementById('cc-progress-bar').style.width = ((i+0.5)/files.length*100) + '%';
 
@@ -2243,6 +2297,19 @@ async function handleCcUpload(input) {
     } catch(err) {
       errorCount++;
       console.warn('Screenshot', i+1, 'failed:', err.message);
+      // If it\'s a rate limit error, wait and retry once
+      if(err.message && (err.message.includes('429') || err.message.includes('quota') || err.message.includes('rate'))) {
+        document.getElementById('cc-loading-text').textContent = `額度暫達上限，等待 60 秒後重試第 ${i+1} 張...`;
+        await new Promise(r => setTimeout(r, 60000));
+        try {
+          const base64 = await fileToBase64(file);
+          const items = await callGeminiCcOcr(base64, file.type, cardName);
+          allItems = allItems.concat(items);
+          errorCount--; // Recovered
+        } catch(retryErr) {
+          console.warn('Retry also failed:', retryErr.message);
+        }
+      }
     }
   }
 
