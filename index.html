@@ -255,9 +255,28 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <!-- Chart -->
-      <div class="section-title">市值走勢</div>
-      <div class="card card-body"><div class="chart-wrap"><canvas id="stock-chart"></canvas></div></div>
+      <!-- Asset Allocation -->
+      <div class="section-title">資產配置</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div id="allocation-content"></div>
+      </div>
+
+      <!-- Net Worth History -->
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>淨資產趨勢</span>
+        <button class="btn btn-ghost btn-sm" onclick="takeSnapshotManually()" style="font-size:11px;padding:4px 10px;">📸 快照</button>
+      </div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div class="chart-wrap" style="height:200px;"><canvas id="networth-chart"></canvas></div>
+        <div id="networth-empty" style="display:none;text-align:center;padding:24px 0;color:var(--muted,#94a3b8);font-size:13px;">
+          📊 還沒有歷史快照<br>
+          <span style="font-size:11px;">每月自動拍一次，或點上方「快照」立即建立</span>
+        </div>
+      </div>
+
+      <!-- Stock Market Trend (smaller) -->
+      <div class="section-title">買入後市值變化</div>
+      <div class="card card-body"><div class="chart-wrap" style="height:160px;"><canvas id="stock-chart"></canvas></div></div>
 
       <!-- Add button -->
       <button class="btn btn-primary" onclick="openSheet('buy')"><i class="fa-solid fa-plus"></i> 新增買入</button>
@@ -882,6 +901,8 @@ function switchPage(name, tab) {
   if(name==='cashflow') renderExpenseChart();
   if(name==='stock') {
     renderStockChart();
+    renderAllocation();
+    renderNetworthChart();
     const isTrading = (() => {
       const now = new Date();
       const h = now.getHours(), m = now.getMinutes(), day = now.getDay();
@@ -1200,6 +1221,11 @@ function deleteAccount(){
 
 // ── Render ────────────────────────────────────────────────
 function updateUI(){
+  // Refresh allocation and networth chart if on stock page
+  const active = document.querySelector('.page.active');
+  if(active && active.id === 'page-stock') {
+    setTimeout(() => { renderAllocation(); renderNetworthChart(); }, 50);
+  }
   renderStats(); renderDashAssets(); renderAccountChips();
   renderPriceBoard(); renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars();
 }
@@ -2088,6 +2114,233 @@ function consolidateCategories(){
 }
 
 
+
+
+// ── Asset Allocation Visualization ────────────────────────
+function classifyStock(sym) {
+  // Taiwan ETFs/stocks - keep all as 台股 for now
+  // Could be extended: US tickers contain only letters, TW are numbers
+  if(/^[A-Z]+$/.test(sym)) return 'us';
+  return 'tw';
+}
+
+function renderAllocation() {
+  const el = document.getElementById('allocation-content');
+  if(!el) return;
+
+  // Calculate values
+  let twStock = 0, usStock = 0;
+  const stockByType = {};
+  db.stock.forEach(s => {
+    const price = db.prices[s.symbol] ? parseFloat(db.prices[s.symbol]) : s.price;
+    const value = s.shares * price;
+    const type = classifyStock(s.symbol);
+    if(type === 'tw') twStock += value;
+    else usStock += value;
+    stockByType[s.symbol] = (stockByType[s.symbol]||0) + value;
+  });
+  const cashByAccount = {};
+  let totalCash = 0;
+  db.assets.forEach(a => {
+    cashByAccount[a.name] = a.balance;
+    totalCash += a.balance;
+  });
+
+  const totalAssets = twStock + usStock + totalCash;
+  if(totalAssets <= 0) {
+    el.innerHTML = '<div style="text-align:center;padding:24px 0;color:var(--muted,#94a3b8);font-size:13px;">尚無資產資料</div>';
+    return;
+  }
+
+  // Build HTML with 3-level visualization
+  let html = '';
+
+  // ── Level 1: Stock vs Cash ──
+  const totalStock = twStock + usStock;
+  const stockPct = (totalStock/totalAssets*100).toFixed(1);
+  const cashPct = (totalCash/totalAssets*100).toFixed(1);
+
+  html += '<div style="margin-bottom:18px;">';
+  html += '<div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;display:flex;justify-content:space-between;">';
+  html += '<span>📊 風險配置</span>';
+  html += '<span>$'+Math.round(totalAssets).toLocaleString()+'</span>';
+  html += '</div>';
+  html += '<div style="display:flex;height:32px;border-radius:8px;overflow:hidden;background:var(--bg3,#334155);">';
+  if(totalStock > 0) {
+    html += '<div style="background:#3b82f6;width:'+stockPct+'%;display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:600;">';
+    html += parseFloat(stockPct) >= 12 ? '股票 '+stockPct+'%' : '';
+    html += '</div>';
+  }
+  if(totalCash > 0) {
+    html += '<div style="background:#10b981;width:'+cashPct+'%;display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:600;">';
+    html += parseFloat(cashPct) >= 12 ? '現金 '+cashPct+'%' : '';
+    html += '</div>';
+  }
+  html += '</div>';
+  // Legend below for narrow segments
+  html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted,#94a3b8);margin-top:6px;">';
+  html += '<span>📈 股票 $'+Math.round(totalStock).toLocaleString()+'</span>';
+  html += '<span>💵 現金 $'+Math.round(totalCash).toLocaleString()+'</span>';
+  html += '</div>';
+  html += '</div>';
+
+  // ── Level 2: Detailed breakdown ──
+  html += '<div style="margin-bottom:14px;">';
+  html += '<div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;">🌏 地區與類型</div>';
+
+  if(twStock > 0) {
+    const pct = (twStock/totalAssets*100).toFixed(1);
+    html += renderAllocBar('🇹🇼 台股', twStock, pct, '#3b82f6');
+  }
+  if(usStock > 0) {
+    const pct = (usStock/totalAssets*100).toFixed(1);
+    html += renderAllocBar('🇺🇸 美股', usStock, pct, '#8b5cf6');
+  }
+  // Cash by account
+  Object.entries(cashByAccount).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]).forEach(([name, val]) => {
+    const pct = (val/totalAssets*100).toFixed(1);
+    const isDelivery = db.assets.find(a => a.name === name)?.isDelivery;
+    const icon = isDelivery ? '⭐ ' : '💼 ';
+    html += renderAllocBar(icon+name, val, pct, '#10b981');
+  });
+  html += '</div>';
+
+  // ── Level 3: Individual stocks (top 5) ──
+  const topStocks = Object.entries(stockByType).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  if(topStocks.length > 0) {
+    html += '<div>';
+    html += '<div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;">🎯 個別持股 Top 5</div>';
+    const colors = ['#3b82f6','#8b5cf6','#10b981','#f59e0b','#ef4444'];
+    topStocks.forEach(([sym, val], i) => {
+      const pct = (val/totalAssets*100).toFixed(1);
+      html += renderAllocBar(sym, val, pct, colors[i]);
+    });
+    html += '</div>';
+  }
+
+  // ── Concentration warning (FIRE-related) ──
+  const topConcentration = topStocks[0] ? (topStocks[0][1]/totalAssets*100) : 0;
+  if(topConcentration > 30) {
+    html += '<div style="background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:12px;color:#fbbf24;line-height:1.5;">';
+    html += '⚠️ <strong>'+topStocks[0][0]+'</strong> 占淨資產 '+topConcentration.toFixed(0)+'%，集中度偏高';
+    html += '</div>';
+  }
+  const stockPctNum = parseFloat(stockPct);
+  if(stockPctNum > 90) {
+    html += '<div style="background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);border-radius:10px;padding:10px 12px;margin-top:8px;font-size:12px;color:#f87171;line-height:1.5;">';
+    html += '🚨 股票占比超過 90%，建議保留 6-12 個月生活費的緊急預備金';
+    html += '</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function renderAllocBar(label, value, pct, color) {
+  return '<div style="margin-bottom:8px;">'
+    +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px;">'
+      +'<span>'+label+'</span>'
+      +'<span style="color:var(--muted,#94a3b8);">$'+Math.round(value).toLocaleString()+' · '+pct+'%</span>'
+    +'</div>'
+    +'<div style="height:6px;background:var(--bg3,#334155);border-radius:99px;overflow:hidden;">'
+      +'<div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:99px;"></div>'
+    +'</div>'
+  +'</div>';
+}
+
+// ── Net Worth History Chart ───────────────────────────────
+function renderNetworthChart() {
+  const ctx = document.getElementById('networth-chart');
+  const emptyEl = document.getElementById('networth-empty');
+  if(!ctx) return;
+
+  const snapshots = db.snapshots || [];
+
+  if(snapshots.length < 1) {
+    ctx.style.display = 'none';
+    if(emptyEl) emptyEl.style.display = 'block';
+    return;
+  }
+
+  ctx.style.display = 'block';
+  if(emptyEl) emptyEl.style.display = 'none';
+
+  if(charts.networth) charts.networth.destroy();
+
+  // Sort by yyyy-mm
+  const sorted = [...snapshots].sort((a,b) => a.ym.localeCompare(b.ym));
+  const labels = sorted.map(s => {
+    const [y,m] = s.ym.split('-');
+    return y.slice(2) + '/' + parseInt(m);
+  });
+
+  charts.networth = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: '淨資產',
+          data: sorted.map(s => s.net),
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,.15)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 4,
+          pointBackgroundColor: '#3b82f6',
+          borderWidth: 2
+        },
+        {
+          label: '股票市值',
+          data: sorted.map(s => s.stock),
+          borderColor: '#8b5cf6',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+          borderWidth: 1.5,
+          borderDash: [4,4]
+        },
+        {
+          label: '現金',
+          data: sorted.map(s => s.cash),
+          borderColor: '#10b981',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.3,
+          pointRadius: 2,
+          borderWidth: 1.5,
+          borderDash: [4,4]
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#94a3b8', font: { size: 11 }, padding: 10, usePointStyle: true, boxWidth: 8 }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': $' + Math.round(ctx.parsed.y).toLocaleString()
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } },
+        y: { ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => fmtK(v) }, grid: { color: 'rgba(255,255,255,.05)' } }
+      }
+    }
+  });
+}
+
+function takeSnapshotManually() {
+  takeSnapshot();
+  toast('✅ 已建立本月快照');
+  renderNetworthChart();
+  renderAllocation();
+}
 
 // ── Asset History Snapshot (auto monthly) ────────────────
 function takeSnapshot(){
