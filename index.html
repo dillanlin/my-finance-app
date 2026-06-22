@@ -377,6 +377,59 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
       <input type="file" id="import-file" hidden accept=".json" onchange="importData(this)">
 
+      <div class="section-title">個人資料（讓 AI 更了解你）</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:12px;line-height:1.7;">
+          設定後，AI 體檢會根據你的狀況給<strong style="color:var(--text,#f1f5f9);">個人化建議</strong>，例如考量年齡、職業、家庭、長期目標。
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">年齡</label>
+            <input type="number" class="form-input" id="prof-age" placeholder="30">
+          </div>
+          <div class="form-group">
+            <label class="form-label">每月薪資（稅後）</label>
+            <input type="number" class="form-input" id="prof-salary" placeholder="60000">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">職業 / 產業</label>
+          <input type="text" class="form-input" id="prof-job" placeholder="例：半導體工程師、軟體設計師">
+        </div>
+        <div class="form-group">
+          <label class="form-label">家庭狀況</label>
+          <select class="form-select" id="prof-family">
+            <option value="">未設定</option>
+            <option value="單身">單身</option>
+            <option value="情侶（無共同財務）">情侶（無共同財務）</option>
+            <option value="已婚無小孩">已婚無小孩</option>
+            <option value="已婚有小孩">已婚有小孩</option>
+            <option value="與家人同住">與家人同住</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">財務目標（短文字描述）</label>
+          <textarea class="form-input" id="prof-goal" placeholder="例：35歲前累積 1000 萬達成 FIRE，5年內買房自住" style="min-height:60px;font-family:inherit;resize:vertical;"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">風險偏好</label>
+          <select class="form-select" id="prof-risk">
+            <option value="">未設定</option>
+            <option value="保守（重視安全）">保守（重視安全）</option>
+            <option value="穩健（多數股票+部分債券）">穩健（多數股票+部分債券）</option>
+            <option value="積極（高比例股票）">積極（高比例股票）</option>
+            <option value="非常積極（個股、槓桿）">非常積極（個股、槓桿）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">其他補充資訊（選填）</label>
+          <textarea class="form-input" id="prof-notes" placeholder="例：目前在台灣工作，有國泰富邦投資帳戶，配偶有自己的收入..." style="min-height:50px;font-family:inherit;resize:vertical;"></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="saveProfile()">
+          <i class="fa-solid fa-floppy-disk"></i> 儲存個人資料
+        </button>
+      </div>
+
       <div class="section-title">FinMind 股價來源（推薦）</div>
       <div class="card card-body" style="margin-bottom:12px;">
         <div style="font-size:14px;color:var(--muted,#94a3b8);margin-bottom:12px;line-height:1.7;">
@@ -474,7 +527,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="sheet-overlay" id="sheet-ai-report" onclick="closeSheetOnBg(event,'sheet-ai-report')">
   <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-shrink:0;">
       <div class="sheet-title" style="margin-bottom:0;">AI 月度財務體檢</div>
       <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
     </div>
@@ -861,6 +914,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if(!db.budgets) db.budgets={};
   if(!db.geminiKey) db.geminiKey='';
   if(!db.finmindToken) db.finmindToken='';
+  if(!db.profile) db.profile={};
   if(!db.customCats) db.customCats=[];
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
@@ -896,7 +950,7 @@ function switchPage(name, tab) {
   tab.classList.add('active');
   document.getElementById('scroll-area').scrollTop = 0;
   const titles={dashboard:'💰 財富指揮官', stock:'📈 存股管理', cashflow:'💳 記帳', settings:'⚙️ 設定'};
-  if(name==='settings') setTimeout(() => { loadGeminiKeyToInput(); loadFinmindTokenToInput(); }, 50);
+  if(name==='settings') setTimeout(() => { loadGeminiKeyToInput(); loadFinmindTokenToInput(); loadProfileToInputs(); }, 50);
   document.getElementById('header-title').textContent = titles[name]||'';
   if(name==='cashflow') renderExpenseChart();
   if(name==='stock') {
@@ -1718,6 +1772,50 @@ function toast(msg){
 }
 
 
+
+// ── Personal Profile ─────────────────────────────────────
+function saveProfile() {
+  db.profile = {
+    age: document.getElementById('prof-age').value.trim(),
+    salary: document.getElementById('prof-salary').value.trim(),
+    job: document.getElementById('prof-job').value.trim(),
+    family: document.getElementById('prof-family').value,
+    goal: document.getElementById('prof-goal').value.trim(),
+    risk: document.getElementById('prof-risk').value,
+    notes: document.getElementById('prof-notes').value.trim()
+  };
+  saveData();
+  toast('✅ 個人資料已儲存，AI 會用來個人化建議');
+}
+
+function loadProfileToInputs() {
+  if(!db.profile) return;
+  const p = db.profile;
+  const setVal = (id, val) => { const el = document.getElementById(id); if(el && val) el.value = val; };
+  setVal('prof-age', p.age);
+  setVal('prof-salary', p.salary);
+  setVal('prof-job', p.job);
+  setVal('prof-family', p.family);
+  setVal('prof-goal', p.goal);
+  setVal('prof-risk', p.risk);
+  setVal('prof-notes', p.notes);
+}
+
+function buildProfileSummary() {
+  if(!db.profile) return '';
+  const p = db.profile;
+  const parts = [];
+  if(p.age) parts.push(p.age+'歲');
+  if(p.job) parts.push(p.job);
+  if(p.family) parts.push(p.family);
+  if(p.salary) parts.push('月薪稅後 $'+parseInt(p.salary).toLocaleString());
+  if(p.risk) parts.push('風險偏好：'+p.risk);
+  let s = parts.length ? '用戶簡介：'+parts.join('，')+'。\n' : '';
+  if(p.goal) s += '財務目標：'+p.goal+'。\n';
+  if(p.notes) s += '補充：'+p.notes+'。\n';
+  return s;
+}
+
 // ── FinMind Token management ─────────────────────────────
 function saveFinmindToken() {
   const token = document.getElementById('finmind-token-input').value.trim();
@@ -1916,6 +2014,56 @@ async function runAiReport() {
     ? Object.entries(db.budgets).filter(([,v])=>v>0).map(([cat,lim])=>cat+'預算$'+lim).join('、')
     : '尚未設定預算';
 
+  // ── Stock portfolio details ──
+  const stockAgg = {};
+  db.stock.forEach(s => {
+    if(!stockAgg[s.symbol]) stockAgg[s.symbol] = {sym:s.symbol, shares:0, cost:0};
+    stockAgg[s.symbol].shares += s.shares;
+    stockAgg[s.symbol].cost += s.shares * s.price;
+  });
+  const stockLines = Object.values(stockAgg).map(s => {
+    const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
+    const mkt = curP * s.shares;
+    const pl = mkt - s.cost;
+    const roi = s.cost ? (pl/s.cost*100).toFixed(1) : '0';
+    return '  '+s.sym+'：'+s.shares.toLocaleString()+'股，市值$'+Math.round(mkt).toLocaleString()+'，報酬'+(pl>=0?'+':'')+'$'+Math.round(pl).toLocaleString()+'（'+(pl>=0?'+':'')+roi+'%）';
+  }).join('\n') || '  (無持股)';
+
+  // Cash accounts breakdown
+  const cashLines = db.assets.filter(a=>a.balance>0).sort((a,b)=>b.balance-a.balance).map(a => {
+    return '  '+a.name+(a.isDelivery?'（交割戶）':'')+'：$'+Math.round(a.balance).toLocaleString();
+  }).join('\n') || '  (無)';
+
+  // Asset allocation summary
+  const totalStock = Object.values(stockAgg).reduce((sum,s) => {
+    const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
+    return sum + curP*s.shares;
+  }, 0);
+  const totalCash = db.assets.reduce((a,b)=>a+b.balance,0);
+  const totalAssets = totalStock + totalCash;
+  const stockPctNum = totalAssets > 0 ? (totalStock/totalAssets*100).toFixed(1) : 0;
+  const cashPctNum = totalAssets > 0 ? (totalCash/totalAssets*100).toFixed(1) : 0;
+
+  // Concentration analysis
+  let concentrationNote = '';
+  if(totalStock > 0) {
+    const sortedStocks = Object.values(stockAgg).map(s => {
+      const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
+      return {sym:s.sym, val:curP*s.shares};
+    }).sort((a,b)=>b.val-a.val);
+    const topPct = (sortedStocks[0].val/totalAssets*100).toFixed(1);
+    concentrationNote = '最高持股集中度：'+sortedStocks[0].sym+' '+topPct+'%';
+  }
+
+  // Snapshot trend (last 6 months)
+  const recentSnaps = (db.snapshots||[]).slice(-6);
+  const snapLines = recentSnaps.length > 1
+    ? recentSnaps.map(s => '  '+s.ym+'：淨資產 $'+Math.round(s.net).toLocaleString()).join('\n')
+    : '  (歷史資料不足，需累積快照)';
+
+  // Personal profile
+  const profileSummary = buildProfileSummary();
+
   // Determine savings rate health
   let healthScore = '';
   if(thisIncTotal > 0) {
@@ -1927,26 +2075,37 @@ async function runAiReport() {
     else healthScore = '入不敷出，需注意';
   }
 
-  const prompt = '你是專業的個人財務顧問，請用繁體中文做月度財務體檢，給出實用建議。\n\n'
-    + '【本月（'+ym+'）財務數據】\n'
+  let prompt = '你是專業的個人財務顧問。請用繁體中文做完整的月度財務體檢，根據用戶實際狀況給個人化建議。\n\n';
+
+  if(profileSummary) prompt += '【關於用戶】\n' + profileSummary + '\n';
+
+  prompt += '【本月（'+ym+'）財務數據】\n'
     + '收入總計：$'+Math.round(thisIncTotal).toLocaleString()+'\n'+incLines+'\n\n'
     + '支出總計：$'+Math.round(thisExpTotal).toLocaleString()+'\n'+expCatLines+'\n\n'
     + '儲蓄金額：$'+Math.round(thisSavings).toLocaleString()+'\n'
     + '儲蓄率：'+thisSavingsRate+'%'+(healthScore?'（'+healthScore+'）':'')+'\n\n'
     + '【上月（'+prevYm+'）對照】\n'
     + '收入：$'+Math.round(lastIncTotal).toLocaleString()+'  支出：$'+Math.round(lastExpTotal).toLocaleString()+'  儲蓄率：'+lastSavingsRate+'%\n\n'
-    + '【整體資產】\n'
-    + '股票市值 $'+stockMkt.toLocaleString()+'　現金 $'+cashBal.toLocaleString()+'　淨資產 $'+netWorth.toLocaleString()+'\n'
-    + 'FIRE 目標 $'+fireTarget.toLocaleString()+'（已達 '+firePct+'%）\n\n'
+    + '【資產配置】\n'
+    + '淨資產總額：$'+netWorth.toLocaleString()+'\n'
+    + '股票市值：$'+stockMkt.toLocaleString()+'（佔淨資產 '+stockPctNum+'%）\n'
+    + '現金總額：$'+cashBal.toLocaleString()+'（佔淨資產 '+cashPctNum+'%）\n'
+    + (concentrationNote ? concentrationNote+'\n' : '')
+    + '\n'
+    + '【持股明細】\n'+stockLines+'\n\n'
+    + '【資金帳戶】\n'+cashLines+'\n\n'
+    + '【近期淨資產變化（最多 6 個月）】\n'+snapLines+'\n\n'
+    + '【FIRE 進度】\n'
+    + '預估年支出：$'+(db.fireGoal||300000).toLocaleString()+'，目標 $'+fireTarget.toLocaleString()+'（4% 法則），目前達 '+firePct+'%\n\n'
     + '【預算設定】\n'+budgetInfo+'\n\n'
-    + '請依序給出（用 emoji 開頭分段，語氣像朋友聊天）：\n\n'
-    + '💼 1. 本月總評（3-4句，講儲蓄率水準和整體狀況）\n\n'
-    + '💰 2. 收入分析（穩定度、是否成長、是否有副業空間）\n\n'
-    + '💸 3. 支出體檢（哪些類別偏高、是否符合預算、與上月差異最大的）\n\n'
-    + '📊 4. 儲蓄率診斷（跟上月比、跟標竿 20% 比、健康度）\n\n'
-    + '🎯 5. 三個具體行動建議（針對最大問題給可執行方法）\n\n'
-    + '🔥 6. FIRE 進度更新（按目前儲蓄速度推估還要幾年）\n\n'
-    + '請用實際數字佐證，建議要具體可執行（例如「減少訂閱費 $500」而非「節省開支」）。';
+    + '請給出完整體檢報告（用 emoji 開頭分段，語氣像朋友聊天，但建議要專業）：\n\n'
+    + '💼 1. 整體財務健檢（綜合評估，並對照用戶年齡/職業階段給合理化判斷）\n\n'
+    + '💰 2. 收支分析（收入穩定度、支出體檢、儲蓄率診斷、與上月變化）\n\n'
+    + '📈 3. 投資組合健康度（股票/現金比例是否適合用戶風險偏好、集中度風險、持股分散度）\n\n'
+    + '🎯 4. 三個具體行動建議（針對個人狀況最該優先做的事，建議要量化）\n\n'
+    + '🔥 5. FIRE 路徑（按目前累積速度推估年數，並提示需要調整哪些變數加速達標）\n\n'
+    + '⚠️ 6. 風險提醒（緊急預備金是否充足、集中度、職涯風險等）\n\n'
+    + '重要：建議要連結用戶實際狀況（年齡、職業、家庭），不要給泛泛之論。';
 
   // Show loading
   document.getElementById('ai-report-idle').style.display = 'none';
