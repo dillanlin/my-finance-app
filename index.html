@@ -525,7 +525,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <!-- ── Bottom Sheets ── -->
 <!-- AI report sheet -->
 <div class="sheet-overlay" id="sheet-ai-report" onclick="closeSheetOnBg(event,'sheet-ai-report')">
-  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
+  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-shrink:0;">
       <div class="sheet-title" style="margin-bottom:0;">AI 月度財務體檢</div>
@@ -533,7 +533,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
 
     <!-- Idle state -->
-    <div id="ai-report-idle">
+    <div id="ai-report-idle" style="flex-shrink:0;">
       <div style="background:var(--bg3,#334155);border-radius:14px;padding:16px;margin-bottom:16px;">
         <div style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.8;">
           AI 會做完整分析：<br>
@@ -551,15 +551,15 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
 
     <!-- Loading state -->
-    <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;">
+    <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;flex-shrink:0;">
       <div style="font-size:32px;margin-bottom:12px;">🤔</div>
       <div style="font-size:15px;font-weight:500;margin-bottom:6px;">AI 分析中...</div>
       <div style="font-size:13px;color:var(--muted,#94a3b8);" id="ai-loading-text">整理你的消費資料</div>
     </div>
 
     <!-- Result state -->
-    <div id="ai-report-result" style="display:none;flex:1;min-height:0;flex-direction:column;">
-      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:12px;padding-right:4px;"></div>
+    <div id="ai-report-result" style="display:none;flex:1 1 auto;min-height:0;flex-direction:column;overflow:hidden;">
+      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:12px;padding-right:4px;"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;flex-shrink:0;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);">
         <button class="btn btn-ghost" onclick="runAiReport()">
           <i class="fa-solid fa-rotate-right"></i> 重新分析
@@ -600,7 +600,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 <!-- Credit Card Statement OCR -->
 <div class="sheet-overlay" id="sheet-cc-ocr" onclick="closeSheetOnBg(event,'sheet-cc-ocr')">
-  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;">
+  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
     <div class="sheet-title" style="flex-shrink:0;">📸 多筆消費截圖匯入</div>
     <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.6;flex-shrink:0;">
@@ -2102,10 +2102,27 @@ async function runAiReport() {
     + '💼 1. 整體財務健檢（綜合評估，並對照用戶年齡/職業階段給合理化判斷）\n\n'
     + '💰 2. 收支分析（收入穩定度、支出體檢、儲蓄率診斷、與上月變化）\n\n'
     + '📈 3. 投資組合健康度（股票/現金比例是否適合用戶風險偏好、集中度風險、持股分散度）\n\n'
-    + '🎯 4. 三個具體行動建議（針對個人狀況最該優先做的事，建議要量化）\n\n'
-    + '🔥 5. FIRE 路徑（按目前累積速度推估年數，並提示需要調整哪些變數加速達標）\n\n'
-    + '⚠️ 6. 風險提醒（緊急預備金是否充足、集中度、職涯風險等）\n\n'
-    + '重要：建議要連結用戶實際狀況（年齡、職業、家庭），不要給泛泛之論。';
+    + '💵 4. 個人化預算建議（重要！）\n'
+    + '   請為每個支出類別建議合理金額（用實際數字），並符合以下原則：\n'
+    + '   - 餐費：通常佔總支出 20-30%\n'
+    + '   - 交通：通常佔 10-15%（含通勤、加油、停車）\n'
+    + '   - 住房：通常佔 25-35%（含房租、水電、瓦斯、管理費）\n'
+    + '   - 購物：通常佔 5-10%（日用、衣著、3C）\n'
+    + '   - 娛樂：通常佔 5-10%（電影、旅遊、聚餐、興趣嗜好）\n'
+    + '   - 訂閱：通常佔 1-3%（Netflix、Spotify、iCloud 等定期費用）\n'
+    + '   - 醫療：通常佔 2-5%（含保險、看診、保健）\n'
+    + '   - 雜費/其他：通常佔 3-5%（無法歸類的小額支出）\n'
+    + '   建議要根據用戶實際收入和目標儲蓄率反推，列成清晰的表格格式。\n\n'
+    + '🎯 5. 三個具體行動建議（針對個人狀況最該優先做的事，建議要量化）\n\n'
+    + '🔥 6. FIRE 路徑（按目前累積速度推估年數，並提示需要調整哪些變數加速達標）\n\n'
+    + '📊 7. 本月股市行情快報\n'
+    + '   請根據用戶的興趣（科技股 + ETF）給出近期市場觀察：\n'
+    + '   - 台股 0050、006208 等大盤型 ETF 近況評論\n'
+    + '   - 科技股趨勢（台積電、AI 概念股、半導體族群）\n'
+    + '   - 對用戶現有持股的觀察與建議（是否該加碼、減碼或持有）\n'
+    + '   ⚠️ 重要：你可能不知道最新即時股價，請依據用戶 App 內提供的市值和報酬率資料來分析，並聲明這是基於用戶資料而非即時行情，建議用戶查證最新資訊。\n\n'
+    + '⚠️ 8. 風險提醒（緊急預備金是否充足、集中度、職涯風險等）\n\n'
+    + '重要：建議要連結用戶實際狀況（年齡、職業、家庭、產業背景），不要給泛泛之論。';
 
   // Show loading
   document.getElementById('ai-report-idle').style.display = 'none';
@@ -2128,7 +2145,7 @@ async function runAiReport() {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1800 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 3500 }
       })
     });
     const data = await r.json();
