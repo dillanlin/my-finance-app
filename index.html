@@ -525,21 +525,21 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <!-- ── Bottom Sheets ── -->
 <!-- AI report sheet -->
 <div class="sheet-overlay" id="sheet-ai-report" onclick="closeSheetOnBg(event,'sheet-ai-report')">
-  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
-    <div class="sheet-handle" style="flex-shrink:0;"></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-shrink:0;">
+  <div class="sheet" id="ai-sheet-inner" style="max-height:92vh;">
+    <div class="sheet-handle"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <div class="sheet-title" style="margin-bottom:0;">AI 月度財務體檢</div>
       <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
     </div>
 
     <!-- Idle state -->
-    <div id="ai-report-idle" style="flex-shrink:0;">
+    <div id="ai-report-idle">
       <div style="background:var(--bg3,#334155);border-radius:14px;padding:16px;margin-bottom:16px;">
         <div style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.8;">
           AI 會做完整分析：<br>
           💰 收入結構 &nbsp;·&nbsp; 💸 支出體檢<br>
           📊 儲蓄率診斷 &nbsp;·&nbsp; 🔥 FIRE 進度<br>
-          🎯 具體行動建議
+          🎯 具體行動建議 &nbsp;·&nbsp; 📊 股市行情
         </div>
       </div>
       <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;" onclick="runAiReport()">
@@ -551,16 +551,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
 
     <!-- Loading state -->
-    <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;flex-shrink:0;">
+    <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;">
       <div style="font-size:32px;margin-bottom:12px;">🤔</div>
       <div style="font-size:15px;font-weight:500;margin-bottom:6px;">AI 分析中...</div>
       <div style="font-size:13px;color:var(--muted,#94a3b8);" id="ai-loading-text">整理你的消費資料</div>
     </div>
 
     <!-- Result state -->
-    <div id="ai-report-result" style="display:none;flex:1 1 auto;min-height:0;flex-direction:column;overflow:hidden;">
-      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:12px;padding-right:4px;"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;flex-shrink:0;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);">
+    <div id="ai-report-result" style="display:none;">
+      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;padding-bottom:80px;"></div>
+      <!-- Sticky bottom buttons -->
+      <div style="position:sticky;bottom:0;left:0;right:0;background:var(--bg2,#1e293b);padding:12px 0;margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:10px;border-top:1px solid rgba(255,255,255,.08);">
         <button class="btn btn-ghost" onclick="runAiReport()">
           <i class="fa-solid fa-rotate-right"></i> 重新分析
         </button>
@@ -572,7 +573,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div id="ai-report-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);margin-bottom:12px;"></div>
   </div>
 </div>
-
 
 <!-- Custom category sheet -->
 <div class="sheet-overlay" id="sheet-custom-cat" onclick="closeSheetOnBg(event,'sheet-custom-cat')">
@@ -2155,7 +2155,7 @@ async function runAiReport() {
 
     clearInterval(loadingTimer);
     document.getElementById('ai-report-loading').style.display = 'none';
-    document.getElementById('ai-report-result').style.display = 'flex';
+    document.getElementById('ai-report-result').style.display = 'block';
     document.getElementById('ai-report-content').textContent = text;
 
   } catch(err) {
