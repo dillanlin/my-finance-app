@@ -126,6 +126,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:flex-end;}
 .sheet-overlay.open{display:flex;}
 .sheet{background:var(--bg2);border-radius:20px 20px 0 0;padding:12px 20px 20px;width:100%;max-height:90vh;overflow-y:auto;padding-bottom:calc(20px + var(--safe-bot));}
+.sheet-ai{padding:0;display:flex;flex-direction:column;max-height:92vh;height:92vh;overflow:hidden;}
+.sheet-ai .ai-head{padding:12px 20px 12px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.06);}
+.sheet-ai .ai-body{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 20px;}
+.sheet-ai .ai-foot{padding:12px 20px calc(12px + var(--safe-bot));flex-shrink:0;border-top:1px solid rgba(255,255,255,.06);background:var(--bg2);}
 .sheet-handle{width:36px;height:4px;background:var(--bg3);border-radius:99px;margin:0 auto 16px;}
 .sheet-title{font-size:18px;font-weight:700;margin-bottom:20px;}
 
@@ -525,52 +529,61 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <!-- ── Bottom Sheets ── -->
 <!-- AI report sheet -->
 <div class="sheet-overlay" id="sheet-ai-report" onclick="closeSheetOnBg(event,'sheet-ai-report')">
-  <div class="sheet" id="ai-sheet-inner" style="max-height:92vh;">
-    <div class="sheet-handle"></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <div class="sheet-title" style="margin-bottom:0;">AI 月度財務體檢</div>
-      <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
+  <div class="sheet sheet-ai">
+    <!-- Fixed header -->
+    <div class="ai-head">
+      <div class="sheet-handle" style="margin-bottom:8px;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="sheet-title" style="margin-bottom:0;">AI 月度財務體檢</div>
+        <span id="ai-report-month" style="font-size:13px;color:var(--muted,#94a3b8);"></span>
+      </div>
     </div>
 
-    <!-- Idle state -->
-    <div id="ai-report-idle">
-      <div style="background:var(--bg3,#334155);border-radius:14px;padding:16px;margin-bottom:16px;">
-        <div style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.8;">
-          AI 會做完整分析：<br>
-          💰 收入結構 &nbsp;·&nbsp; 💸 支出體檢<br>
-          📊 儲蓄率診斷 &nbsp;·&nbsp; 🔥 FIRE 進度<br>
-          🎯 具體行動建議 &nbsp;·&nbsp; 📊 股市行情
+    <!-- Scrollable body -->
+    <div class="ai-body" id="ai-body">
+      <!-- Idle state -->
+      <div id="ai-report-idle">
+        <div style="background:var(--bg3,#334155);border-radius:14px;padding:16px;margin-bottom:16px;">
+          <div style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.8;">
+            AI 會做完整分析：<br>
+            💰 收入結構 &nbsp;·&nbsp; 💸 支出體檢<br>
+            📊 儲蓄率診斷 &nbsp;·&nbsp; 🔥 FIRE 進度<br>
+            🎯 具體行動建議 &nbsp;·&nbsp; 📊 股市行情
+          </div>
+        </div>
+        <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;" onclick="runAiReport()">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 開始分析
+        </button>
+        <div id="ai-report-no-key" style="display:none;margin-top:12px;padding:12px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);">
+          ⚠️ 尚未設定 Gemini API Key，請到「設定」頁面輸入後再試
         </div>
       </div>
-      <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;" onclick="runAiReport()">
-        <i class="fa-solid fa-wand-magic-sparkles"></i> 開始分析
-      </button>
-      <div id="ai-report-no-key" style="display:none;margin-top:12px;padding:12px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);">
-        ⚠️ 尚未設定 Gemini API Key，請到「設定」頁面輸入後再試
+
+      <!-- Loading state -->
+      <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;">
+        <div style="font-size:32px;margin-bottom:12px;">🤔</div>
+        <div style="font-size:15px;font-weight:500;margin-bottom:6px;">AI 分析中...</div>
+        <div style="font-size:13px;color:var(--muted,#94a3b8);" id="ai-loading-text">整理你的消費資料</div>
       </div>
+
+      <!-- Result state -->
+      <div id="ai-report-result" style="display:none;">
+        <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;"></div>
+      </div>
+
+      <!-- Error state -->
+      <div id="ai-report-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);"></div>
     </div>
 
-    <!-- Loading state -->
-    <div id="ai-report-loading" style="display:none;text-align:center;padding:32px 0;">
-      <div style="font-size:32px;margin-bottom:12px;">🤔</div>
-      <div style="font-size:15px;font-weight:500;margin-bottom:6px;">AI 分析中...</div>
-      <div style="font-size:13px;color:var(--muted,#94a3b8);" id="ai-loading-text">整理你的消費資料</div>
-    </div>
-
-    <!-- Result state -->
-    <div id="ai-report-result" style="display:none;">
-      <div id="ai-report-content" style="font-size:14px;line-height:1.85;color:var(--text,#f1f5f9);white-space:pre-wrap;padding-bottom:80px;"></div>
-      <!-- Sticky bottom buttons -->
-      <div style="position:sticky;bottom:0;left:0;right:0;background:var(--bg2,#1e293b);padding:12px 0;margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:10px;border-top:1px solid rgba(255,255,255,.08);">
+    <!-- Fixed footer (only visible when result/error shown) -->
+    <div class="ai-foot" id="ai-foot" style="display:none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
         <button class="btn btn-ghost" onclick="runAiReport()">
           <i class="fa-solid fa-rotate-right"></i> 重新分析
         </button>
         <button class="btn btn-ghost" onclick="closeSheet('ai-report')">關閉</button>
       </div>
     </div>
-
-    <!-- Error state -->
-    <div id="ai-report-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);margin-bottom:12px;"></div>
   </div>
 </div>
 
@@ -1944,6 +1957,10 @@ function openAiReportSheet() {
   document.getElementById('ai-report-result').style.display = 'none';
   document.getElementById('ai-report-error').style.display = 'none';
   document.getElementById('ai-report-no-key').style.display = db.geminiKey ? 'none' : 'block';
+  document.getElementById('ai-foot').style.display = 'none';
+  // Scroll body to top
+  const body = document.getElementById('ai-body');
+  if(body) body.scrollTop = 0;
 }
 
 async function runAiReport() {
@@ -2153,7 +2170,7 @@ async function runAiReport() {
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.7, maxOutputTokens: 3500 }
+            generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
           })
         });
         const data = await r.json();
@@ -2208,6 +2225,10 @@ async function runAiReport() {
     document.getElementById('ai-report-loading').style.display = 'none';
     document.getElementById('ai-report-result').style.display = 'block';
     document.getElementById('ai-report-content').textContent = text;
+    document.getElementById('ai-foot').style.display = 'block';
+    // Scroll to top of report
+    const body = document.getElementById('ai-body');
+    if(body) body.scrollTop = 0;
 
   } catch(err) {
     clearInterval(loadingTimer);
@@ -2219,6 +2240,7 @@ async function runAiReport() {
     }
     document.getElementById('ai-report-error').textContent = msg;
     document.getElementById('ai-report-idle').style.display = 'block';
+    document.getElementById('ai-foot').style.display = 'block';
   }
 }
 
