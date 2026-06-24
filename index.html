@@ -2115,35 +2115,16 @@ async function runAiReport() {
     + '【FIRE 進度】\n'
     + '預估年支出：$'+(db.fireGoal||300000).toLocaleString()+'，目標 $'+fireTarget.toLocaleString()+'（4% 法則），目前達 '+firePct+'%\n\n'
     + '【預算設定】\n'+budgetInfo+'\n\n'
-    + '請給出完整體檢報告（用 emoji 開頭分段，語氣像朋友聊天，但建議要專業）：\n\n'
-    + '💼 1. 整體財務健檢（綜合評估，並對照用戶年齡/職業階段給合理化判斷）\n\n'
-    + '💰 2. 收支分析（收入穩定度、支出體檢、儲蓄率診斷、與上月變化）\n\n'
-    + '📈 3. 投資組合健康度（股票/現金比例是否適合用戶風險偏好、集中度風險、持股分散度）\n\n'
-    + '💵 4. 個人化預算建議（重要！）\n'
-    + '   請為每個支出類別建議合理金額（用實際數字），並符合以下原則：\n'
-    + '   - 餐費：通常佔總支出 20-30%\n'
-    + '   - 交通：通常佔 10-15%（含通勤、加油、停車）\n'
-    + '   - 住房：通常佔 25-35%（含房租、水電、瓦斯、管理費）\n'
-    + '   - 購物：通常佔 5-10%（日用、衣著、3C）\n'
-    + '   - 娛樂：通常佔 5-10%（電影、旅遊、聚餐、興趣嗜好）\n'
-    + '   - 訂閱：通常佔 1-3%（Netflix、Spotify、iCloud 等定期費用）\n'
-    + '   - 醫療：通常佔 2-5%（含保險、看診、保健）\n'
-    + '   - 雜費/其他：通常佔 3-5%（無法歸類的小額支出）\n'
-    + '   建議要根據用戶實際收入和目標儲蓄率反推，列成清晰的表格格式。\n\n'
-    + '🎯 5. 三個具體行動建議（針對個人狀況最該優先做的事，建議要量化）\n\n'
-    + '🔥 6. FIRE 路徑（按目前累積速度推估年數，並提示需要調整哪些變數加速達標）\n\n'
-    + '📊 7. 本月股市行情快報\n'
-    + '   請根據用戶的興趣（科技股 + ETF）給出近期市場觀察：\n'
-    + '   - 台股 0050、006208 等大盤型 ETF 近況評論\n'
-    + '   - 科技股趨勢（台積電、AI 概念股、半導體族群）\n'
-    + '   - 對用戶現有持股的觀察與建議（是否該加碼、減碼或持有）\n'
-    + '   ⚠️ 重要：你可能不知道最新即時股價，請依據用戶 App 內提供的市值和報酬率資料來分析，並聲明這是基於用戶資料而非即時行情，建議用戶查證最新資訊。\n\n'
-    + '⚠️ 8. 風險提醒（緊急預備金是否充足、集中度、職涯風險等）\n\n'
-    + '【最終提醒 - 必須遵守】\\n'
-    + '1. 整份報告務必使用繁體中文，不可混用英文（金額符號 $ 和數字可以保留）\\n'
-    + '2. 必須完整涵蓋上面 8 個區塊，不能跳過資產配置(3)、預算建議(4)、股市行情(7)\\n'
-    + '3. 建議要連結用戶實際狀況（年齡、職業、家庭、產業背景），不要給泛泛之論\\n'
-    + '4. 股市行情部分要對用戶持股給出明確建議（持有/加碼/減碼）';
+    + '【報告格式】每段 3-5 句精簡有力，用 emoji 開頭。必須完成全部 8 段：\n\n'
+    + '💼 1. 整體健檢\n'
+    + '💰 2. 收支分析（含儲蓄率與上月比）\n'
+    + '📈 3. 投資組合（股債比、集中度）\n'
+    + '💵 4. 預算建議（給具體數字：餐費/交通/住房/購物/娛樂/訂閱/醫療/雜費）\n'
+    + '🎯 5. 三個量化行動建議\n'
+    + '🔥 6. FIRE 推估年數 + 加速建議\n'
+    + '📊 7. 股市快報（針對用戶持股 0050/006208/2330 給持有/加碼/減碼建議。聲明非即時行情）\n'
+    + '⚠️ 8. 風險提醒（緊急金、集中度）\n\n'
+    + '【鐵則】1)全程繁體中文禁英文 2)8 段都要寫完 3)建議量化 4)連結用戶實際狀況。直接從第 1 段開始，不要寫前言。';
 
   // Show loading
   document.getElementById('ai-report-idle').style.display = 'none';
@@ -2187,8 +2168,42 @@ async function runAiReport() {
           }
           throw lastErr;
         }
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        // Combine ALL parts (Gemini sometimes splits long responses)
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        let text = parts.map(p => p.text || '').join('');
+        const finishReason = data.candidates?.[0]?.finishReason || '';
+
         if(!text) throw new Error('AI 未回傳結果');
+
+        // If truncated by token limit, automatically continue
+        if(finishReason === 'MAX_TOKENS') {
+          console.log('Response truncated, requesting continuation...');
+          const el2 = document.getElementById('ai-loading-text');
+          if(el2) el2.textContent = '報告較長，AI 繼續生成中...';
+          try {
+            const contUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${db.geminiKey}`;
+            const contR = await fetch(contUrl, {
+              method: 'POST',
+              headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({
+                contents: [
+                  { role: 'user', parts: [{ text: prompt }] },
+                  { role: 'model', parts: [{ text: text }] },
+                  { role: 'user', parts: [{ text: '請從你剛剛被截斷的地方繼續寫下去，直到完整把所有區塊（包括 7. 股市行情、8. 風險提醒）都寫完。直接接續寫，不要重複前文，不要說「好的」或「繼續」開頭。' }] }
+                ],
+                generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
+              })
+            });
+            const contData = await contR.json();
+            const contParts = contData.candidates?.[0]?.content?.parts || [];
+            const contText = contParts.map(p => p.text || '').join('');
+            if(contText) {
+              text = text + '\n\n' + contText;
+            }
+          } catch(contErr) {
+            console.warn('Continuation failed:', contErr.message);
+          }
+        }
         return text;
       } catch(e) {
         lastErr = e;
