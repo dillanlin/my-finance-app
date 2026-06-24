@@ -2137,21 +2137,68 @@ async function runAiReport() {
     if(el) el.textContent = LOADING_MSGS[msgIdx];
   }, 1200);
 
+  // Retry helper - tries multiple models and waits if overloaded
+  async function tryGemini(modelName, retries) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${db.geminiKey}`;
+    let lastErr = null;
+    const delays = [3000, 8000, 15000]; // 3s, 8s, 15s
+    for(let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.7, maxOutputTokens: 3500 }
+          })
+        });
+        const data = await r.json();
+        if(data.error) {
+          lastErr = new Error(data.error.message);
+          // If overloaded / quota / busy, wait and retry
+          const msg = data.error.message.toLowerCase();
+          if((msg.includes('overload') || msg.includes('high demand') || msg.includes('busy') || msg.includes('unavailable') || msg.includes('rate') || msg.includes('quota')) && attempt < retries) {
+            const wait = delays[attempt] || 15000;
+            const el = document.getElementById('ai-loading-text');
+            if(el) el.textContent = `伺服器忙線中，${wait/1000} 秒後重試（${attempt+1}/${retries}）...`;
+            await new Promise(res => setTimeout(res, wait));
+            continue;
+          }
+          throw lastErr;
+        }
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if(!text) throw new Error('AI 未回傳結果');
+        return text;
+      } catch(e) {
+        lastErr = e;
+        if(attempt < retries && (e.message.includes('overload') || e.message.includes('demand') || e.message.includes('NetworkError'))) {
+          const wait = delays[attempt] || 15000;
+          const el = document.getElementById('ai-loading-text');
+          if(el) el.textContent = `連線錯誤，${wait/1000} 秒後重試...`;
+          await new Promise(res => setTimeout(res, wait));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw lastErr || new Error('Unknown error');
+  }
+
   try {
-    const model = db.geminiModel || 'gemini-2.0-flash-exp';
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 3500 }
-      })
-    });
-    const data = await r.json();
-    if(data.error) throw new Error(data.error.message);
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    if(!text) throw new Error('AI 未回傳結果');
+    const primaryModel = db.geminiModel || 'gemini-2.0-flash';
+    let text;
+    try {
+      text = await tryGemini(primaryModel, 2); // try 3 times total
+    } catch(e1) {
+      // Fallback: try gemini-1.5-flash if primary keeps failing
+      const el = document.getElementById('ai-loading-text');
+      if(el) el.textContent = '主要模型不可用，切換備用模型...';
+      try {
+        text = await tryGemini('gemini-1.5-flash', 1);
+      } catch(e2) {
+        throw e1; // Throw the original error
+      }
+    }
 
     clearInterval(loadingTimer);
     document.getElementById('ai-report-loading').style.display = 'none';
@@ -2162,7 +2209,11 @@ async function runAiReport() {
     clearInterval(loadingTimer);
     document.getElementById('ai-report-loading').style.display = 'none';
     document.getElementById('ai-report-error').style.display = 'block';
-    document.getElementById('ai-report-error').textContent = '❌ 分析失敗：' + err.message;
+    let msg = '❌ 分析失敗：' + err.message;
+    if(err.message.toLowerCase().includes('overload') || err.message.toLowerCase().includes('demand')) {
+      msg = '⚠️ Gemini 伺服器忙線中（已重試 3 次）\n\n通常 5-10 分鐘後會恢復，請稍後再試。\n或到「設定」頁面切換到其他可用模型。';
+    }
+    document.getElementById('ai-report-error').textContent = msg;
     document.getElementById('ai-report-idle').style.display = 'block';
   }
 }
@@ -2830,7 +2881,7 @@ async function callGeminiCcOcr(base64, mediaType, cardName) {
 - 退款用負數金額表示
 - 如果是 Line Pay 通知（例如「Line Pay 已支付 $120 給全家便利商店」），merchant 用「全家便利商店」`;
 
-  const model = db.geminiModel || 'gemini-2.0-flash-exp';
+  const model = db.geminiModel || 'gemini-2.0-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
   const r = await fetch(url, {
     method: 'POST',
@@ -2998,7 +3049,7 @@ async function callClaudeOCR(base64, mediaType) {
 ]
 注意：代號只取數字部分（如0050、006208、2330），shares、avgPrice、currentPrice 都要是純數字，不要有逗號。`;
 
-  const model = db.geminiModel || 'gemini-2.0-flash-exp';
+  const model = db.geminiModel || 'gemini-2.0-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
