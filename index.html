@@ -2851,17 +2851,44 @@ async function handleCcUpload(input) {
     }
   });
 
-  // ── Smart deduplication: same date + merchant + amount = duplicate ──
+  // ── Smart deduplication ──
+  // 1. Within current batch: exact match (date+merchant+amount) = duplicate
+  // 2. Against existing db.expenses: also check date+amount (allow 1-day diff for posting lag)
   const seen = new Map();
   let dupCount = 0;
+  let possibleDupCount = 0;
   ccParsedItems = [];
+  const existingKeys = new Set(db.expenses.map(e => e.date+'|'+e.amount));
+
   allItems.forEach(it => {
-    const key = `${it.date}|${(it.merchant||'').trim()}|${it.amount}`;
-    if(seen.has(key)) {
+    if(!it.amount || !it.date) return;
+    const amt = Math.abs(parseFloat(it.amount));
+
+    // Within batch exact match
+    const exactKey = it.date+'|'+(it.merchant||'').trim()+'|'+amt;
+    if(seen.has(exactKey)) {
       dupCount++;
       return;
     }
-    seen.set(key, true);
+    seen.set(exactKey, true);
+
+    // Against existing data: date+amount match = possible duplicate
+    // Also check 1 day before/after (for Line Pay vs credit card posting delay)
+    const dateObj = new Date(it.date);
+    let isPossibleDup = false;
+    for(let offset = -1; offset <= 1; offset++) {
+      const checkDate = new Date(dateObj);
+      checkDate.setDate(checkDate.getDate() + offset);
+      const checkKey = checkDate.toISOString().split('T')[0]+'|'+amt;
+      if(existingKeys.has(checkKey)) {
+        isPossibleDup = true;
+        break;
+      }
+    }
+    if(isPossibleDup) {
+      it._possibleDup = true;
+      possibleDupCount++;
+    }
     ccParsedItems.push(it);
   });
 
@@ -2890,37 +2917,41 @@ function fileToBase64(file) {
 }
 
 async function callGeminiCcOcr(base64, mediaType, cardName) {
-  const prompt = `這是一張台灣記帳相關截圖，可能是：
-（A）信用卡帳單明細
-（B）Line Pay / 街口 / 全支付的交易紀錄
-（C）iPhone 通知中心顯示的多筆支付通知
-（D）其他電子支付的消費明細
-
-請辨識所有的「消費交易」（排除：繳款、退款回沖、優惠折抵、紅利點數、未確認交易、即將扣款），以純 JSON 格式回覆，不要有任何其他文字：
+  const prompt = `這是一張台灣記帳相關截圖。請辨識所有「消費交易」（排除：繳款、退款、優惠折抵、紅利、未確認、即將扣款），以純 JSON 格式回覆：
 [
-  {"date":"消費日期 YYYY-MM-DD","merchant":"商家名稱","amount":金額數字,"category":"自動歸類"}
+  {"date":"YYYY-MM-DD","merchant":"店家","amount":數字,"category":"歸類","paymentMethod":"支付方式"}
 ]
 
-日期判斷規則：
-- 如果只看到月日（例如 11/15），日期格式用 "MM-DD"，年份留空
-- 如果完全沒日期，date 留空字串
-- 通知中心截圖通常會顯示「剛剛」「2小時前」這類，請推算成今天日期
+【台灣信用卡帳單常見格式】
+- "LPEPI*XXX" 或 "LINEPAY*XXX" → 透過 Line Pay 支付，merchant 為 "XXX"，paymentMethod 寫 "Line Pay"
+- "街口*XXX" → 透過街口支付，paymentMethod 寫 "街口支付"
+- "全支付*XXX" → 透過全支付，paymentMethod 寫 "全支付"
+- 沒有以上前綴 → 直接刷信用卡，paymentMethod 寫 "信用卡"
 
-歸類規則（category 必須是以下其中之一）：
-- 餐費：餐廳、咖啡、超商、外送、飲料、便當、麵店、火鍋、燒烤
-- 交通：加油站、停車、計程車、Uber、高鐵、台鐵、客運、機票、悠遊卡儲值
-- 購物：百貨、3C、服飾、美妝、網購、蝦皮、momo、家樂福、好市多、藥妝
-- 娛樂：電影、遊戲、KTV、旅遊、住宿、票券、Steam
-- 醫療：診所、醫院、藥局、保健、健檢
-- 住房：房租、水電瓦斯、管理費、家具、家電、網路、第四台
-- 訂閱：Netflix、Spotify、YouTube、Apple、Google、iCloud、ChatGPT、軟體月費
-- 其他：無法明確歸類
+【店家名稱清理規則】
+- "LPEPI*WonderPet" → merchant: "WonderPet"
+- "LINEPAY*showba" → merchant: "showba"
+- "LPEPI*LIANGSHEHANPAIG" → merchant: "良食漢堡" (盡可能辨識中文音譯)
+- "TRA" → "台鐵"
+- "YOUBIKE" → "YouBike"
+- "公用事業-電、煤氣、衛生方面的事..." → "水電瓦斯"
 
-重要：
-- 金額不要有逗號，純數字
-- 商家名稱保留原始中英文
-- 退款用負數金額表示
-- 如果是 Line Pay 通知（例如「Line Pay 已支付 $120 給全家便利商店」），merchant 用「全家便利商店」`;
+【日期】
+- 完整日期 (2026/06/03) → "2026-06-03"
+- 只有月日 (06/03) → "06-03" (年份留空)
+- 通知顯示「剛剛」「2小時前」→ 推算今天日期
+
+【歸類 category】
+- 餐費：餐廳、咖啡、超商、外送、飲料、便當
+- 交通：加油、停車、Uber、高鐵、台鐵、TRA、YouBike、捷運
+- 購物：百貨、3C、服飾、IKEA、蝦皮、momo、家樂福、HiLife
+- 娛樂：電影、遊戲、KTV、旅遊、住宿
+- 醫療：診所、醫院、藥局、Hospital
+- 住房：房租、水費、電費、瓦斯、公用事業、Pet（寵物視為住房支出）
+- 訂閱：Netflix、Spotify、YouTube、Apple、Google、iCloud、Claude、ChatGPT、Anthropic
+- 其他：無法歸類
+
+注意：金額純數字不要有逗號，退款用負數。`;
 
   const model = db.geminiModel || 'gemini-2.0-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
@@ -2969,11 +3000,20 @@ function renderCcResults() {
   const total = ccParsedItems.reduce((s,it) => s + (parseFloat(it.amount)||0), 0);
   summary.textContent = `共 ${ccParsedItems.length} 筆 · $${Math.round(total).toLocaleString()}`;
 
+  // Show summary with possible duplicate warning
+  const possibleDups = ccParsedItems.filter(it => it._possibleDup).length;
+  if(possibleDups > 0) {
+    summary.innerHTML = '共 '+ccParsedItems.length+' 筆 · <span style="color:#fbbf24;">⚠️ '+possibleDups+' 筆疑似重複</span>';
+  }
+
   list.innerHTML = ccParsedItems.map((it, i) => {
     const emoji = CAT_EMOJIS[it.category] || '🏷️';
     const catOpts = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他']
       .map(c => `<option value="${c}"${c===it.category?' selected':''}>${CAT_EMOJIS[c]||'🏷️'} ${c}</option>`).join('');
-    return `<div style="background:var(--card,#1e293b);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;margin-bottom:8px;">
+    const dupWarning = it._possibleDup
+      ? '<div style="background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#fbbf24;">⚠️ 疑似重複（已有同日同金額紀錄），請確認是否需要匯入</div>'
+      : '';
+    return dupWarning + `<div style="background:var(--card,#1e293b);border:1px solid ${it._possibleDup?'rgba(251,191,36,.3)':'rgba(255,255,255,.08)'};border-radius:12px;padding:12px;margin-bottom:8px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
         <div style="flex:1;min-width:0;">
           <input type="text" value="${it.merchant||''}" placeholder="店家"
@@ -3024,7 +3064,7 @@ function importCcData() {
       date: it.date,
       amount: amt,
       category: it.category || '其他',
-      paymentMethod: cardName,
+      paymentMethod: it.paymentMethod || cardName,
       note: it.merchant || ''
     });
     keys.add(key);
