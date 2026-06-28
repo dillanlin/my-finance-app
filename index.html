@@ -287,6 +287,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div style="height:8px;"></div>
       <button class="btn btn-ghost" onclick="openSheet('sell')"><i class="fa-solid fa-hand-holding-dollar"></i> 賣出股票</button>
       <div style="height:8px;"></div>
+      <button class="btn btn-ghost" onclick="openSheet('dividend')"><i class="fa-solid fa-coins"></i> 記錄配息</button>
+      <div style="height:8px;"></div>
       <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;" onclick="openSheet('ocr')">
         <i class="fa-solid fa-camera"></i> 截圖匯入（AI 自動判讀）
       </button>
@@ -797,6 +799,38 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- Dividend -->
+<div class="sheet-overlay" id="sheet-dividend" onclick="closeSheetOnBg(event,'sheet-dividend')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">記錄股利配息</div>
+    <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.6;">
+      記下收到的現金股利，會自動入帳到指定帳戶並計入收入，存股頁的報酬率也會改用「含息報酬」。
+    </div>
+    <div class="form-group">
+      <label class="form-label">配息日期</label>
+      <input type="date" class="form-input" id="div-date">
+    </div>
+    <div class="form-group">
+      <label class="form-label">股票</label>
+      <select class="form-select" id="div-sym"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">配息總金額（實際入帳，已扣稅費）</label>
+      <input type="number" class="form-input" id="div-amount" placeholder="0" style="font-size:24px;font-weight:700;">
+    </div>
+    <div class="form-group">
+      <label class="form-label">入帳帳戶</label>
+      <select class="form-select" id="div-account"></select>
+    </div>
+    <button class="btn btn-primary" onclick="addDividend()"><i class="fa-solid fa-coins"></i> 確認入帳</button>
+    <div style="border-top:1px solid rgba(255,255,255,.08);margin-top:16px;padding-top:14px;">
+      <div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;">配息紀錄</div>
+      <div id="dividend-list"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Expense -->
 <div class="sheet-overlay" id="sheet-expense" onclick="closeSheetOnBg(event,'sheet-expense')">
   <div class="sheet">
@@ -924,6 +958,8 @@ window.addEventListener('DOMContentLoaded', () => {
     saveData();
   }
   if(!db.subs) db.subs=[];
+  if(!db.incomes) db.incomes=[];
+  if(!db.dividends) db.dividends=[];
   if(!db.budgets) db.budgets={};
   if(!db.geminiKey) db.geminiKey='';
   if(!db.finmindToken) db.finmindToken='';
@@ -986,6 +1022,7 @@ function openSheet(name) {
   if(name==='budget') { openBudgetSheet(); }
   if(name==='ai-report') { openAiReportSheet(); }
   if(name==='custom-cat') { openCustomCatSheet(); }
+  if(name==='dividend') { openDividendSheet(); }
   if(name==='cc-ocr') { openCcOcrSheet(); }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
@@ -1001,18 +1038,23 @@ function populateSheetSelects(name) {
     sell: ['sell-account'],
     expense: ['exp-account'],
     income: ['inc-account'],
-    sub: ['sub-account']
+    sub: ['sub-account'],
+    dividend: ['div-account']
   };
   (maps[name]||[]).forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=accOpts; });
-  // Pre-select delivery for buy/sell
-  if(name==='buy'||name==='sell') {
-    const selId = name==='buy'?'buy-account':'sell-account';
+  // Pre-select delivery for buy/sell/dividend
+  if(name==='buy'||name==='sell'||name==='dividend') {
+    const selId = name==='buy'?'buy-account':name==='sell'?'sell-account':'div-account';
     const delAcc = db.assets.find(a=>a.isDelivery);
     if(delAcc) document.getElementById(selId).value = delAcc.id;
   }
   if(name==='sell') {
     const syms=[...new Set(db.stock.map(s=>s.symbol))];
     document.getElementById('sell-sym').innerHTML = syms.map(s=>`<option>${s}</option>`).join('');
+  }
+  if(name==='dividend') {
+    const syms=[...new Set(db.stock.map(s=>s.symbol))];
+    document.getElementById('div-sym').innerHTML = syms.map(s=>`<option>${s}</option>`).join('');
   }
 }
 
@@ -1049,6 +1091,56 @@ function doSell() {
   if(acc) acc.balance += shares*price;
   saveData(); updateUI(); closeSheet('sell');
   toast(`✅ 賣出 ${sym} ${shares}股，入帳 $${Math.round(shares*price).toLocaleString()}`);
+}
+
+// ── Dividends ─────────────────────────────────────────────
+function openDividendSheet(){
+  const d=document.getElementById('div-date'); if(d) d.value=today();
+  const a=document.getElementById('div-amount'); if(a) a.value='';
+  renderDividendList();
+}
+
+function addDividend(){
+  const sym=document.getElementById('div-sym').value;
+  const amt=parseFloat(document.getElementById('div-amount').value);
+  const date=document.getElementById('div-date').value;
+  const accId=parseInt(document.getElementById('div-account').value);
+  if(!sym||!amt) return toast('⚠️ 請填寫股票與金額');
+  if(!db.dividends) db.dividends=[];
+  if(!db.incomes) db.incomes=[];
+  const id=Date.now();
+  db.dividends.push({id, date, symbol:sym, amount:amt, accountId:accId});
+  // 同步計入收入（標記 _dividend 以便連動刪除）
+  db.incomes.push({id, date, amount:amt, source:'股利', targetId:accId, _dividend:true});
+  const acc=db.assets.find(a=>a.id===accId);
+  if(acc) acc.balance+=amt;
+  saveData(); updateUI(); renderDividendList();
+  document.getElementById('div-amount').value='';
+  toast(`✅ ${sym} 配息 $${Math.round(amt).toLocaleString()} 已入帳`);
+}
+
+function deleteDividend(id){
+  const d=(db.dividends||[]).find(x=>x.id===id);
+  if(!d) return;
+  if(!confirm('刪除這筆配息紀錄？帳戶餘額與收入會一併沖銷')) return;
+  const acc=db.assets.find(a=>a.id===d.accountId);
+  if(acc) acc.balance-=d.amount;
+  db.dividends=db.dividends.filter(x=>x.id!==id);
+  db.incomes=(db.incomes||[]).filter(x=>!(x.id===id && x._dividend));
+  saveData(); updateUI(); renderDividendList();
+  toast('已刪除配息紀錄');
+}
+
+function renderDividendList(){
+  const el=document.getElementById('dividend-list');
+  if(!el) return;
+  const list=[...(db.dividends||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(!list.length){ el.innerHTML='<div style="padding:14px 0;text-align:center;color:var(--muted,#94a3b8);font-size:13px;">尚無配息紀錄</div>'; return; }
+  el.innerHTML=list.map(d=>`
+    <div class="sub-item">
+      <div><div style="font-size:15px;font-weight:500;">${d.symbol} <span style="color:#34d399;">+$${Math.round(d.amount).toLocaleString()}</span></div><div style="font-size:12px;color:var(--muted,#94a3b8);">${d.date||''}</div></div>
+      <button class="btn-icon" onclick="deleteDividend(${d.id})" style="color:var(--red,#f87171);"><i class="fa-solid fa-xmark"></i></button>
+    </div>`).join('');
 }
 
 async function fetchAllPrices() {
@@ -1303,6 +1395,8 @@ function getStockMkt(){
   return mkt;
 }
 function getCash(){ return db.assets.reduce((a,b)=>a+b.balance,0); }
+// 累積配息（含息報酬用）
+function getDividendTotal(sym){ return (db.dividends||[]).filter(d=>d.symbol===sym).reduce((a,d)=>a+(d.amount||0),0); }
 
 function renderStats(){
   const mkt=getStockMkt(), cash=getCash(), net=mkt+cash;
@@ -1409,18 +1503,22 @@ function renderStockTable(){
     tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted,#94a3b8);padding:24px;font-size:13px;"><div style="font-size:28px;margin-bottom:8px;opacity:.4;">📊</div>尚無持股紀錄<br><span style="font-size:12px;">點下方「新增買入」開始建立</span></td></tr>';
     return;
   }
-  let totalCost=0, totalMkt=0;
+  let totalCost=0, totalMkt=0, totalDiv=0;
   const rowsHtml = rows.sort((a,b)=>b.cost-a.cost).map(s=>{
     const curP = db.prices[s.sym];
     const avg = s.cost/s.shares;
     const mkt = (curP?parseFloat(curP):avg)*s.shares;
-    const pl = mkt-s.cost;
-    const roi = s.cost?(pl/s.cost*100):0;
+    const div = getDividendTotal(s.sym);
+    const pl = mkt-s.cost+div;       // 含息損益
+    const roi = s.cost?(pl/s.cost*100):0;  // 含息報酬率
     const cls = pl>=0?'pos':'neg';
     const sign = pl>=0?'+':'';
-    totalCost+=s.cost; totalMkt+=mkt;
+    totalCost+=s.cost; totalMkt+=mkt; totalDiv+=div;
+    const symCell = div>0
+      ? s.sym+'<div style="font-size:10px;color:#34d399;font-weight:500;">💵 已收 $'+Math.round(div).toLocaleString()+'</div>'
+      : s.sym;
     return '<tr>'
-      +'<td style="font-weight:700;color:var(--blue,#3b82f6);">'+s.sym+'</td>'
+      +'<td style="font-weight:700;color:var(--blue,#3b82f6);">'+symCell+'</td>'
       +'<td>'+s.shares.toLocaleString()+'</td>'
       +'<td>$'+Math.round(avg).toLocaleString()+'</td>'
       +'<td style="font-weight:600;">'+(curP?'$'+parseFloat(curP).toLocaleString():'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
@@ -1430,8 +1528,8 @@ function renderStockTable(){
       +'</tr>';
   }).join('');
 
-  // Totals row
-  const totalPl = totalMkt-totalCost;
+  // Totals row（含息）
+  const totalPl = totalMkt-totalCost+totalDiv;
   const totalRoi = totalCost?(totalPl/totalCost*100):0;
   const totalCls = totalPl>=0?'pos':'neg';
   const totalSign = totalPl>=0?'+':'';
@@ -1456,9 +1554,10 @@ function renderStockTable(){
         +'<div style="font-size:18px;font-weight:700;">$'+Math.round(totalMkt).toLocaleString()+'</div>'
       +'</div>'
       +'<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 14px;border:1px solid '+(totalPl>=0?'rgba(248,113,113,.3)':'rgba(16,185,129,.3)')+';">'
-        +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">總損益</div>'
+        +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">總損益'+(totalDiv>0?'（含息）':'')+'</div>'
         +'<div style="font-size:18px;font-weight:700;" class="'+totalCls+'">'+totalSign+'$'+Math.round(Math.abs(totalPl)).toLocaleString()+'</div>'
         +'<div style="font-size:11px;" class="'+totalCls+'">'+totalSign+totalRoi.toFixed(1)+'%</div>'
+        +(totalDiv>0?'<div style="font-size:10px;color:#34d399;margin-top:2px;">含配息 $'+Math.round(totalDiv).toLocaleString()+'</div>':'')
       +'</div>';
   }
 
@@ -2041,10 +2140,12 @@ async function runAiReport() {
   const stockLines = Object.values(stockAgg).map(s => {
     const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
     const mkt = curP * s.shares;
-    const pl = mkt - s.cost;
+    const div = getDividendTotal(s.sym);
+    const pl = mkt - s.cost + div;   // 含息
     const roi = s.cost ? (pl/s.cost*100).toFixed(1) : '0';
-    return '  '+s.sym+'：'+s.shares.toLocaleString()+'股，市值$'+Math.round(mkt).toLocaleString()+'，報酬'+(pl>=0?'+':'')+'$'+Math.round(pl).toLocaleString()+'（'+(pl>=0?'+':'')+roi+'%）';
+    return '  '+s.sym+'：'+s.shares.toLocaleString()+'股，市值$'+Math.round(mkt).toLocaleString()+'，含息報酬'+(pl>=0?'+':'')+'$'+Math.round(pl).toLocaleString()+'（'+(pl>=0?'+':'')+roi+'%）'+(div>0?'，累積配息$'+Math.round(div).toLocaleString():'');
   }).join('\n') || '  (無持股)';
+  const totalDividends = (db.dividends||[]).reduce((a,d)=>a+(d.amount||0),0);
 
   // Cash accounts breakdown
   const cashLines = db.assets.filter(a=>a.balance>0).sort((a,b)=>b.balance-a.balance).map(a => {
@@ -2110,6 +2211,7 @@ async function runAiReport() {
     + (concentrationNote ? concentrationNote+'\n' : '')
     + '\n'
     + '【持股明細】\n'+stockLines+'\n\n'
+    + (totalDividends>0 ? '【累積已收股利】$'+Math.round(totalDividends).toLocaleString()+'（已計入上方含息報酬與現金餘額）\n\n' : '')
     + '【資金帳戶】\n'+cashLines+'\n\n'
     + '【近期淨資產變化（最多 6 個月）】\n'+snapLines+'\n\n'
     + '【FIRE 進度】\n'
