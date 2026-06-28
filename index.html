@@ -848,7 +848,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="form-group">
       <label class="form-label">類別</label>
       <div style="display:flex;gap:6px;">
-        <select class="form-select" id="exp-cat" style="flex:1;" onchange="handleCatChange(this)"></select>
+        <select class="form-select" id="exp-cat" style="flex:1;"></select>
         <button type="button" class="btn btn-ghost btn-sm" style="width:42px;flex-shrink:0;" onclick="openSheet('custom-cat')" title="管理類別">⚙️</button>
       </div>
     </div>
@@ -1386,17 +1386,36 @@ function updateUI(){
     setTimeout(() => { renderAllocation(); renderNetworthChart(); }, 50);
   }
   renderStats(); renderDashAssets(); renderAccountChips();
-  renderPriceBoard(); renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars();
+  renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars();
 }
 
-function getStockMkt(){
-  let mkt=0;
-  db.stock.forEach(s=>{ const p=db.prices[s.symbol]?parseFloat(db.prices[s.symbol]):s.price; mkt+=s.shares*p; });
-  return mkt;
-}
-function getCash(){ return db.assets.reduce((a,b)=>a+b.balance,0); }
 // 累積配息（含息報酬用）
 function getDividendTotal(sym){ return (db.dividends||[]).filter(d=>d.symbol===sym).reduce((a,d)=>a+(d.amount||0),0); }
+
+// ── 持股彙總（單一真相來源）──
+// 依代號合併所有買入紀錄，算出股數/成本/均價/現價/市值/含息損益/報酬率
+// 無有效現價時以均價估值（與舊版以每筆成交價估值的總額等價）
+function getPortfolio(){
+  const agg={};
+  db.stock.forEach(s=>{
+    if(!agg[s.symbol]) agg[s.symbol]={sym:s.symbol, shares:0, cost:0};
+    agg[s.symbol].shares+=s.shares; agg[s.symbol].cost+=s.shares*s.price;
+  });
+  return Object.values(agg).map(s=>{
+    const raw=db.prices[s.sym];
+    const curP=(raw!==undefined && raw!=='' && parseFloat(raw)>0) ? parseFloat(raw) : null;
+    const avg=s.shares ? s.cost/s.shares : 0;
+    const price=curP!==null ? curP : avg;
+    const mkt=price*s.shares;
+    const div=getDividendTotal(s.sym);
+    const plPrice=mkt-s.cost;          // 純價差損益
+    const pl=plPrice+div;              // 含息損益
+    const roi=s.cost ? pl/s.cost*100 : 0;  // 含息報酬率
+    return {sym:s.sym, shares:s.shares, cost:s.cost, avg, price, curP, hasPrice:curP!==null, mkt, div, plPrice, pl, roi};
+  });
+}
+function getStockMkt(){ return getPortfolio().reduce((a,s)=>a+s.mkt,0); }
+function getCash(){ return db.assets.reduce((a,b)=>a+b.balance,0); }
 
 function renderStats(){
   const mkt=getStockMkt(), cash=getCash(), net=mkt+cash;
@@ -1422,16 +1441,8 @@ function updateFIRE(){
 
 function renderDashAssets(){
   let items=[];
-  let agg={};
-  db.stock.forEach(s=>{
-    if(!agg[s.symbol]) agg[s.symbol]={type:'stock',sym:s.symbol,shares:0,cost:0};
-    agg[s.symbol].shares+=s.shares; agg[s.symbol].cost+=s.shares*s.price;
-  });
-  Object.values(agg).forEach(s=>{
-    const curP=db.prices[s.sym];
-    const mkt=(curP?parseFloat(curP):(s.cost/s.shares))*s.shares;
-    const pl=curP?mkt-s.cost:0;
-    items.push({type:'stock', name:s.sym, sub:`${s.shares.toLocaleString()} 股`, value:mkt, pl, hasPrice:!!curP});
+  getPortfolio().forEach(s=>{
+    items.push({type:'stock', name:s.sym, sub:`${s.shares.toLocaleString()} 股`, value:s.mkt, pl:s.plPrice, hasPrice:s.hasPrice});
   });
   db.assets.forEach(a=>items.push({type:'cash', name:a.name, sub:a.isDelivery?'★ 交割戶':'資金帳戶', value:a.balance, id:a.id}));
   // Sort: cash accounts first (by value desc), then stocks (by value desc)
@@ -1488,43 +1499,30 @@ function renderAccountChips(){
       </div>`;
 }
 
-function renderPriceBoard(){ /* removed - using TWSE auto-fetch */ }
-window.updatePrice=(sym,val)=>{db.prices[sym]=val;saveData();renderStockTable();renderStats();renderDashAssets();};
-
 function renderStockTable(){
-  let agg={};
-  db.stock.forEach(s=>{
-    if(!agg[s.symbol]) agg[s.symbol]={sym:s.symbol,shares:0,cost:0};
-    agg[s.symbol].shares+=s.shares; agg[s.symbol].cost+=s.shares*s.price;
-  });
   const tbody=document.getElementById('stock-table-body');
-  const rows=Object.values(agg);
+  const rows=getPortfolio();
   if(!rows.length){
     tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted,#94a3b8);padding:24px;font-size:13px;"><div style="font-size:28px;margin-bottom:8px;opacity:.4;">📊</div>尚無持股紀錄<br><span style="font-size:12px;">點下方「新增買入」開始建立</span></td></tr>';
     return;
   }
   let totalCost=0, totalMkt=0, totalDiv=0;
   const rowsHtml = rows.sort((a,b)=>b.cost-a.cost).map(s=>{
-    const curP = db.prices[s.sym];
-    const avg = s.cost/s.shares;
-    const mkt = (curP?parseFloat(curP):avg)*s.shares;
-    const div = getDividendTotal(s.sym);
-    const pl = mkt-s.cost+div;       // 含息損益
-    const roi = s.cost?(pl/s.cost*100):0;  // 含息報酬率
-    const cls = pl>=0?'pos':'neg';
-    const sign = pl>=0?'+':'';
-    totalCost+=s.cost; totalMkt+=mkt; totalDiv+=div;
-    const symCell = div>0
-      ? s.sym+'<div style="font-size:10px;color:#34d399;font-weight:500;">💵 已收 $'+Math.round(div).toLocaleString()+'</div>'
+    const cls = s.pl>=0?'pos':'neg';
+    const sign = s.pl>=0?'+':'';
+    totalCost+=s.cost; totalMkt+=s.mkt; totalDiv+=s.div;
+    const symCell = s.div>0
+      ? s.sym+'<div style="font-size:10px;color:#34d399;font-weight:500;">💵 已收 $'+Math.round(s.div).toLocaleString()+'</div>'
       : s.sym;
+    const dash = '<span style="color:var(--muted,#94a3b8);">-</span>';
     return '<tr>'
       +'<td style="font-weight:700;color:var(--blue,#3b82f6);">'+symCell+'</td>'
       +'<td>'+s.shares.toLocaleString()+'</td>'
-      +'<td>$'+Math.round(avg).toLocaleString()+'</td>'
-      +'<td style="font-weight:600;">'+(curP?'$'+parseFloat(curP).toLocaleString():'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
-      +'<td style="font-weight:600;">$'+Math.round(mkt).toLocaleString()+'</td>'
-      +'<td class="'+cls+'">'+(curP?sign+fmt(pl):'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
-      +'<td class="'+cls+'">'+(curP?sign+roi.toFixed(1)+'%':'<span style="color:var(--muted,#94a3b8);">-</span>')+'</td>'
+      +'<td>$'+Math.round(s.avg).toLocaleString()+'</td>'
+      +'<td style="font-weight:600;">'+(s.hasPrice?'$'+s.curP.toLocaleString():dash)+'</td>'
+      +'<td style="font-weight:600;">$'+Math.round(s.mkt).toLocaleString()+'</td>'
+      +'<td class="'+cls+'">'+(s.hasPrice?sign+fmt(s.pl):dash)+'</td>'
+      +'<td class="'+cls+'">'+(s.hasPrice?sign+s.roi.toFixed(1)+'%':dash)+'</td>'
       +'</tr>';
   }).join('');
 
@@ -1564,11 +1562,6 @@ function renderStockTable(){
   tbody.innerHTML = rowsHtml + totalsRow;
 }
 
-const CAT_ICONS = {
-  '餐費':'🍜','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊',
-  '住房':'🏠','訂閱':'📱','薪水':'💰','股利':'📈','其他':'📦'
-};
-
 function deleteExpense(id){
   db.expenses=db.expenses.filter(e=>e.id!==id);
   saveData(); updateUI(); toast('已刪除');
@@ -1602,7 +1595,7 @@ function renderRecentExpenses(){
     </div>`;
     byDate[date].forEach(e=>{
       const color=catColors[e.category]||'muted';
-      const icon=CAT_ICONS[e.category]||'📦';
+      const icon=CAT_EMOJIS[e.category]||'📦';
       html+=`<div class="list-row expense-row" style="padding:10px 16px;position:relative;overflow:hidden;" id="exp-row-${e.id}">
         <div class="list-icon" style="background:rgba(${colorToRgb(color)},.15);color:var(--${color});font-size:18px;width:38px;height:38px;">${icon}</div>
         <div class="list-main">
@@ -1740,9 +1733,9 @@ async function handleCSV(input){
   if(allTrans.length){
     let added = 0, dup = 0;
     let newCats = new Set();
-    const keys = new Set(db.expenses.map(e=>`${e.date}|${e.amount}|${e.category}`));
+    const keys = new Set(db.expenses.map(expenseKey));
     allTrans.forEach(t=>{
-      const k = `${t.date}|${t.amount}|${t.category}`;
+      const k = expenseKey(t);
       if(!keys.has(k)){
         db.expenses.push(t);
         keys.add(k);
@@ -1874,6 +1867,8 @@ function fmt(n){
   return '$'+Math.round(n).toLocaleString();
 }
 function fmtK(n){return Math.abs(n)>=1000?(n/1000).toFixed(0)+'k':Math.round(n);}
+// 支出去重 key（日期|金額|類別）
+function expenseKey(e){ return e.date+'|'+e.amount+'|'+e.category; }
 
 let _toastTimer;
 function toast(msg){
@@ -2106,10 +2101,7 @@ async function runAiReport() {
   const lastSavingsRate = lastIncTotal > 0 ? (lastSavings / lastIncTotal * 100).toFixed(1) : 'N/A';
 
   // ── Net worth ──
-  const stockMkt = Math.round(Object.entries(db.prices).reduce((sum,[sym,p])=>{
-    const shares = db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
-    return sum + shares*(parseFloat(p)||0);
-  },0));
+  const stockMkt = Math.round(getStockMkt());
   const cashBal = Math.round(db.assets.reduce((a,b)=>a+b.balance,0));
   const netWorth = stockMkt + cashBal;
 
@@ -2131,21 +2123,11 @@ async function runAiReport() {
     : '尚未設定預算';
 
   // ── Stock portfolio details ──
-  const stockAgg = {};
-  db.stock.forEach(s => {
-    if(!stockAgg[s.symbol]) stockAgg[s.symbol] = {sym:s.symbol, shares:0, cost:0};
-    stockAgg[s.symbol].shares += s.shares;
-    stockAgg[s.symbol].cost += s.shares * s.price;
-  });
-  const stockLines = Object.values(stockAgg).map(s => {
-    const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
-    const mkt = curP * s.shares;
-    const div = getDividendTotal(s.sym);
-    const pl = mkt - s.cost + div;   // 含息
-    const roi = s.cost ? (pl/s.cost*100).toFixed(1) : '0';
-    return '  '+s.sym+'：'+s.shares.toLocaleString()+'股，市值$'+Math.round(mkt).toLocaleString()+'，含息報酬'+(pl>=0?'+':'')+'$'+Math.round(pl).toLocaleString()+'（'+(pl>=0?'+':'')+roi+'%）'+(div>0?'，累積配息$'+Math.round(div).toLocaleString():'');
-  }).join('\n') || '  (無持股)';
-  const totalDividends = (db.dividends||[]).reduce((a,d)=>a+(d.amount||0),0);
+  const portfolio = getPortfolio();
+  const stockLines = portfolio.map(s =>
+    '  '+s.sym+'：'+s.shares.toLocaleString()+'股，市值$'+Math.round(s.mkt).toLocaleString()+'，含息報酬'+(s.pl>=0?'+':'')+'$'+Math.round(s.pl).toLocaleString()+'（'+(s.pl>=0?'+':'')+s.roi.toFixed(1)+'%）'+(s.div>0?'，累積配息$'+Math.round(s.div).toLocaleString():'')
+  ).join('\n') || '  (無持股)';
+  const totalDividends = portfolio.reduce((a,s)=>a+s.div,0);
 
   // Cash accounts breakdown
   const cashLines = db.assets.filter(a=>a.balance>0).sort((a,b)=>b.balance-a.balance).map(a => {
@@ -2153,10 +2135,7 @@ async function runAiReport() {
   }).join('\n') || '  (無)';
 
   // Asset allocation summary
-  const totalStock = Object.values(stockAgg).reduce((sum,s) => {
-    const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
-    return sum + curP*s.shares;
-  }, 0);
+  const totalStock = portfolio.reduce((sum,s)=>sum+s.mkt, 0);
   const totalCash = db.assets.reduce((a,b)=>a+b.balance,0);
   const totalAssets = totalStock + totalCash;
   const stockPctNum = totalAssets > 0 ? (totalStock/totalAssets*100).toFixed(1) : 0;
@@ -2165,10 +2144,7 @@ async function runAiReport() {
   // Concentration analysis
   let concentrationNote = '';
   if(totalStock > 0) {
-    const sortedStocks = Object.values(stockAgg).map(s => {
-      const curP = db.prices[s.sym] ? parseFloat(db.prices[s.sym]) : (s.cost/s.shares);
-      return {sym:s.sym, val:curP*s.shares};
-    }).sort((a,b)=>b.val-a.val);
+    const sortedStocks = portfolio.map(s => ({sym:s.sym, val:s.mkt})).sort((a,b)=>b.val-a.val);
     const topPct = (sortedStocks[0].val/totalAssets*100).toFixed(1);
     concentrationNote = '最高持股集中度：'+sortedStocks[0].sym+' '+topPct+'%';
   }
@@ -2365,7 +2341,7 @@ async function runAiReport() {
 
 // ── Custom Categories ─────────────────────────────────────
 const DEFAULT_CATS = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他'];
-const CAT_EMOJIS = {'餐費':'🍜','飲料':'🥤','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊','住房':'🏠','電費':'💡','水費':'💧','瓦斯':'🔥','電信網路':'📶','保險':'🛡','稅金':'📋','學費':'🎓','治裝':'👕','刷卡':'💳','雜費':'📦','訂閱':'📱','薪水':'💰','獎金':'🎁','利息':'🏦','股票':'📈','其他':'📦'};
+const CAT_EMOJIS = {'餐費':'🍜','飲料':'🥤','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊','住房':'🏠','電費':'💡','水費':'💧','瓦斯':'🔥','電信網路':'📶','保險':'🛡','稅金':'📋','學費':'🎓','治裝':'👕','刷卡':'💳','雜費':'📦','訂閱':'📱','薪水':'💰','獎金':'🎁','利息':'🏦','股票':'📈','股利':'📈','其他':'📦'};
 
 function getAllCats(){
   if(!db.customCats) db.customCats=[];
@@ -2409,10 +2385,6 @@ function refreshCatSelect(){
   const cats=getAllCats();
   sel.innerHTML=cats.map(c=>`<option value="${c}">${CAT_EMOJIS[c]||'🏷️'} ${c}</option>`).join('');
   if(cur && cats.includes(cur)) sel.value=cur;
-}
-
-function handleCatChange(sel){
-  // nothing needed now - reserved for future
 }
 
 function openCustomCatSheet(){
@@ -2501,13 +2473,11 @@ function renderAllocation() {
   // Calculate values
   let twStock = 0, usStock = 0;
   const stockByType = {};
-  db.stock.forEach(s => {
-    const price = db.prices[s.symbol] ? parseFloat(db.prices[s.symbol]) : s.price;
-    const value = s.shares * price;
-    const type = classifyStock(s.symbol);
-    if(type === 'tw') twStock += value;
-    else usStock += value;
-    stockByType[s.symbol] = (stockByType[s.symbol]||0) + value;
+  getPortfolio().forEach(s => {
+    const type = classifyStock(s.sym);
+    if(type === 'tw') twStock += s.mkt;
+    else usStock += s.mkt;
+    stockByType[s.sym] = s.mkt;
   });
   const cashByAccount = {};
   let totalCash = 0;
@@ -2716,10 +2686,7 @@ function takeSnapshotManually() {
 function takeSnapshot(){
   const ym = new Date().toISOString().slice(0,7);
   if(!db.snapshots) db.snapshots=[];
-  const stockMkt = Object.entries(db.prices).reduce((sum,[sym,p])=>{
-    const shares=db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
-    return sum+shares*(parseFloat(p)||0);
-  },0);
+  const stockMkt = getStockMkt();
   const cash=db.assets.reduce((a,b)=>a+b.balance,0);
   const net=stockMkt+cash;
   const existing=db.snapshots.find(s=>s.ym===ym);
@@ -3220,12 +3187,12 @@ function importCcData() {
   const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
 
   let added = 0, totalAmt = 0;
-  const keys = new Set(db.expenses.map(e => `${e.date}|${e.amount}|${e.category}`));
+  const keys = new Set(db.expenses.map(expenseKey));
 
   ccParsedItems.forEach(it => {
     const amt = parseFloat(it.amount) || 0;
     if(amt === 0 || !it.date) return;
-    const key = `${it.date}|${amt}|${it.category}`;
+    const key = expenseKey({date:it.date, amount:amt, category:it.category});
     if(keys.has(key)) return;
     db.expenses.push({
       id: Date.now() + Math.random(),
@@ -3236,8 +3203,7 @@ function importCcData() {
       note: it.merchant || ''
     });
     keys.add(key);
-    if(amt > 0) account.balance -= amt;
-    else account.balance -= amt; // negative amt becomes positive balance (refund)
+    account.balance -= amt; // 退款為負數，-=負數等於把錢加回餘額
     added++;
     totalAmt += amt;
   });
@@ -3404,14 +3370,6 @@ function importOcrData() {
   }
 }
 
-// ── Numbers / CSV smart import ────────────────────────────
-// Numbers export tip: override handleCSV to also accept Numbers-style CSV
-// Numbers 匯出格式: 日期,金額,類別,備註
-// Existing handleCSV already handles generic CSV — works directly.
-// For Numbers specifically, users should:
-//   1. Numbers → 檔案 → 轉換為 → CSV
-//   2. Upload via 匯入 CSV 按鈕
-// The parser auto-detects columns named 日期/金額/類別
 </script>
 </body>
 </html>
