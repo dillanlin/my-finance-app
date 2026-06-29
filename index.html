@@ -636,6 +636,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <input type="text" class="form-input" id="cc-card-name" placeholder="例：Line Pay、國泰 CUBE、玉山 Pi 卡">
         <label class="form-label" style="margin-top:8px;">扣款帳戶</label>
         <select class="form-select" id="cc-account"></select>
+        <label class="form-label" style="margin-top:8px;">截圖所屬月份</label>
+        <input type="month" class="form-input" id="cc-month">
+        <div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:4px;line-height:1.5;">
+          📅 台新「交易明細」只顯示「DD日」沒有月份，這裡指定這批截圖是哪個月，避免日期跑掉
+        </div>
         <div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:8px;line-height:1.5;">
           💡 Line Pay 的款項實際從綁定的信用卡或銀行扣款<br>
           請選對應的扣款來源（如：國泰交割、台新 Richart）
@@ -847,7 +852,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="sheet-overlay" id="sheet-all-exp" onclick="closeSheetOnBg(event,'sheet-all-exp')">
   <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
-    <div class="sheet-title" style="flex-shrink:0;margin-bottom:12px;">全部消費明細</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0;margin-bottom:12px;">
+      <div class="sheet-title" style="margin-bottom:0;">全部消費明細</div>
+      <button class="btn btn-ghost btn-sm" onclick="bulkMoveMonth()" style="font-size:11px;padding:4px 10px;">批次改年月</button>
+    </div>
     <div id="all-exp-months" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;flex-shrink:0;"></div>
     <div id="all-exp-summary" style="font-size:12px;color:var(--muted,#94a3b8);margin:4px 0 8px;flex-shrink:0;"></div>
     <div id="all-exp-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
@@ -1764,10 +1772,12 @@ function formatDateLabel(dateStr){
 
 // ── 全部消費明細（依月份，點進去才載入、一次只畫一個月）──
 let allExpMonth = '';
+let allExpEditId = null;  // 目前正在編輯的支出 id
 function expMonths(){
   return [...new Set(db.expenses.filter(e=>e.amount>0 && e.date).map(e=>e.date.slice(0,7)))].sort((a,b)=>b.localeCompare(a));
 }
 function openAllExpSheet(){
+  allExpEditId = null;
   const months = expMonths();
   if(!months.length){
     document.getElementById('all-exp-months').innerHTML='';
@@ -1818,17 +1828,76 @@ function renderAllExpList(){
     const dayTotal=byDate[date].reduce((s,e)=>s+e.amount,0);
     html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px;background:var(--bg3,#334155);"><span style="font-size:12px;color:var(--muted,#94a3b8);">'+formatDateLabel(date)+'</span><span style="font-size:12px;color:var(--red,#f87171);">-$'+Math.round(dayTotal).toLocaleString()+'</span></div>';
     byDate[date].forEach(e=>{
-      const icon=CAT_EMOJIS[e.category]||'🏷️';
-      const sub=e.note||e.paymentMethod||'';
-      html+='<div class="list-row" style="padding:10px 4px;">'
-        +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(148,163,184,.12);">'+icon+'</div>'
-        +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+e.category+'</div>'+(sub?'<div class="list-sub">'+sub+'</div>':'')+'</div>'
-        +'<div class="list-right" style="display:flex;align-items:center;gap:8px;"><div class="list-value" style="color:var(--red,#f87171);font-size:14px;">-$'+Math.round(e.amount).toLocaleString()+'</div>'
-        +'<button onclick="deleteExpenseInSheet('+e.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button></div>'
+      if(e.id===allExpEditId){
+        // 編輯模式
+        const opts=getAllCats().map(c=>'<option value="'+c+'"'+(c===e.category?' selected':'')+'>'+(CAT_EMOJIS[c]||'🏷️')+' '+c+'</option>').join('');
+        html+='<div style="background:var(--bg3,#334155);border:1px solid var(--blue,#3b82f6);border-radius:10px;padding:10px;margin:6px 2px;">'
+          +'<div style="display:flex;gap:6px;margin-bottom:6px;">'
+            +'<input type="date" id="aee-date" value="'+(e.date||'')+'" style="flex:1;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;">'
+            +'<input type="number" id="aee-amt" value="'+Math.round(e.amount)+'" style="width:90px;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;text-align:right;">'
+          +'</div>'
+          +'<select id="aee-cat" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:6px;">'+opts+'</select>'
+          +'<input type="text" id="aee-note" value="'+String(e.note||e.paymentMethod||'').replace(/"/g,'&quot;')+'" placeholder="備註/店家" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:8px;">'
+          +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+            +'<button onclick="cancelAllExpEdit()" class="btn btn-ghost btn-sm">取消</button>'
+            +'<button onclick="saveAllExpEdit('+e.id+')" class="btn btn-primary btn-sm">儲存</button>'
+          +'</div>'
         +'</div>';
+      } else {
+        const icon=CAT_EMOJIS[e.category]||'🏷️';
+        const sub=e.note||e.paymentMethod||'';
+        html+='<div class="list-row" style="padding:10px 4px;">'
+          +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(148,163,184,.12);">'+icon+'</div>'
+          +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+e.category+'</div>'+(sub?'<div class="list-sub">'+sub+'</div>':'')+'</div>'
+          +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:var(--red,#f87171);font-size:14px;">-$'+Math.round(e.amount).toLocaleString()+'</div>'
+          +'<button onclick="editAllExp('+e.id+')" style="background:rgba(59,130,246,.15);border:none;color:var(--blue,#3b82f6);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✎</button>'
+          +'<button onclick="deleteExpenseInSheet('+e.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button></div>'
+          +'</div>';
+      }
     });
   });
   el.innerHTML=html;
+}
+function editAllExp(id){ allExpEditId=id; renderAllExpList(); }
+function cancelAllExpEdit(){ allExpEditId=null; renderAllExpList(); }
+function saveAllExpEdit(id){
+  const e=db.expenses.find(x=>x.id===id);
+  if(!e){ allExpEditId=null; return; }
+  const d=document.getElementById('aee-date').value;
+  const c=document.getElementById('aee-cat').value;
+  const a=parseFloat(document.getElementById('aee-amt').value);
+  const n=document.getElementById('aee-note').value.trim();
+  if(d) e.date=d;
+  if(c) e.category=c;
+  if(!isNaN(a) && a>0) e.amount=a;
+  e.note=n;
+  allExpEditId=null;
+  saveData(); updateUI();
+  const months=expMonths();
+  if(!months.includes(allExpMonth)) allExpMonth=months[0]||'';
+  renderAllExpMonths(months); renderAllExpList();
+  toast('✅ 已更新');
+}
+// 批次把目前檢視的月份整批改成另一個年月（保留日，只改年月）
+function bulkMoveMonth(){
+  if(!allExpMonth) return;
+  const [y,m]=allExpMonth.split('-');
+  const input=prompt('把「'+y+'/'+parseInt(m)+'」整個月的支出改成哪個年月？\n輸入 YYYY-MM（例如 2026-06）：', '2026-'+m);
+  if(!input) return;
+  const mt=input.trim().match(/^(\d{4})-(\d{1,2})$/);
+  if(!mt){ toast('⚠️ 格式需為 YYYY-MM'); return; }
+  const ny=mt[1], nm=mt[2].padStart(2,'0');
+  let n=0;
+  db.expenses.forEach(e=>{
+    if(e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth){ e.date=ny+'-'+nm+'-'+e.date.slice(8,10); n++; }
+  });
+  if(!n) return;
+  saveData(); updateUI();
+  allExpMonth=ny+'-'+nm;
+  const months=expMonths();
+  if(!months.includes(allExpMonth)) allExpMonth=months[0]||'';
+  renderAllExpMonths(months); renderAllExpList();
+  toast('✅ 已將 '+n+' 筆改到 '+ny+'/'+parseInt(nm));
 }
 function deleteExpenseInSheet(id){
   db.expenses=db.expenses.filter(e=>e.id!==id);
@@ -3056,6 +3125,9 @@ function openCcOcrSheet() {
   // Populate accounts
   const sel = document.getElementById('cc-account');
   if(sel) sel.innerHTML = db.assets.map(a => `<option value="${a.id}">${a.name}${a.isDelivery?' ★':''}</option>`).join('');
+  // 預設截圖所屬月份為本月
+  const mEl = document.getElementById('cc-month');
+  if(mEl && !mEl.value) mEl.value = new Date().toISOString().slice(0,7);
 
   // Reset states
   document.getElementById('cc-idle').style.display = 'block';
@@ -3081,6 +3153,7 @@ async function handleCcUpload(input) {
   }
 
   const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
+  const ccMonth = (document.getElementById('cc-month').value || '').trim();
 
   document.getElementById('cc-idle').style.display = 'none';
   document.getElementById('cc-error').style.display = 'none';
@@ -3112,7 +3185,7 @@ async function handleCcUpload(input) {
 
     try {
       const base64 = await fileToBase64(file);
-      const items = await callGeminiCcOcr(base64, file.type, cardName, file.name);
+      const items = await callGeminiCcOcr(base64, file.type, cardName, file.name, ccMonth);
       allItems = allItems.concat(items);
     } catch(err) {
       errorCount++;
@@ -3125,7 +3198,7 @@ async function handleCcUpload(input) {
         await new Promise(r => setTimeout(r, 60000));
         try {
           const base64 = await fileToBase64(file);
-          const items = await callGeminiCcOcr(base64, file.type, cardName, file.name);
+          const items = await callGeminiCcOcr(base64, file.type, cardName, file.name, ccMonth);
           allItems = allItems.concat(items);
           errorCount--; // Recovered
         } catch(retryErr) {
@@ -3270,8 +3343,9 @@ function parseOcrArray(text){
   catch(e){ return null; }
 }
 
-async function callGeminiCcOcr(base64, mediaType, cardName, fileName) {
-  const prompt = `這是一張台灣台新銀行 App 的消費紀錄截圖（也可能是其他銀行帳單、Line Pay 紀錄或通知）。請把畫面上每一筆「實際消費」抓出來，不要假設固定版面。
+async function callGeminiCcOcr(base64, mediaType, cardName, fileName, ym) {
+  const ymHint = ym ? ('\n\n【本批截圖所屬年月】'+ym.split('-')[0]+'年'+parseInt(ym.split('-')[1])+'月：畫面只有「DD日」或看不到月份時，一律用這個年月組成日期（除非該筆明顯屬於相鄰月份）。') : '';
+  const prompt = `這是一張台灣台新銀行 App 的消費紀錄截圖（也可能是其他銀行帳單、Line Pay 紀錄或通知）。請把畫面上每一筆「實際消費」抓出來，不要假設固定版面。`+ymHint+`
 
 【主要版面：台新 App「交易明細／全部」】每筆一列：
 - 左側：「DD日」（只有日，沒有月）＋類型小圖示（錢袋=帳戶/轉帳、卡片=刷卡）
