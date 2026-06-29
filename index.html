@@ -346,7 +346,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div id="budget-bars" style="margin-bottom:12px;"></div>
 
       <!-- Recent expenses -->
-      <div class="section-title">最近支出</div>
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>最近支出</span>
+        <button class="btn btn-ghost btn-sm" onclick="openSheet('all-exp')" style="font-size:11px;padding:4px 10px;"><i class="fa-solid fa-list"></i> 查看全部明細</button>
+      </div>
       <div class="card" style="padding:0;" id="recent-expenses"></div>
     </div>
 
@@ -837,6 +840,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- All expenses (by month) -->
+<div class="sheet-overlay" id="sheet-all-exp" onclick="closeSheetOnBg(event,'sheet-all-exp')">
+  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="sheet-handle" style="flex-shrink:0;"></div>
+    <div class="sheet-title" style="flex-shrink:0;margin-bottom:12px;">全部消費明細</div>
+    <div id="all-exp-months" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;flex-shrink:0;"></div>
+    <div id="all-exp-summary" style="font-size:12px;color:var(--muted,#94a3b8);margin:4px 0 8px;flex-shrink:0;"></div>
+    <div id="all-exp-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+  </div>
+</div>
+
 <!-- Expense -->
 <div class="sheet-overlay" id="sheet-expense" onclick="closeSheetOnBg(event,'sheet-expense')">
   <div class="sheet">
@@ -1031,6 +1045,7 @@ function openSheet(name) {
   if(name==='custom-cat') { openCustomCatSheet(); }
   if(name==='dividend') { openDividendSheet(); }
   if(name==='cc-ocr') { openCcOcrSheet(); }
+  if(name==='all-exp') { openAllExpSheet(); }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
   // 推一個歷史狀態，讓手機「返回」手勢/按鈕能關閉 sheet 而不是離開 App
@@ -1744,6 +1759,75 @@ function formatDateLabel(dateStr){
   return `${d.getMonth()+1}月${d.getDate()}日`;
 }
 
+// ── 全部消費明細（依月份，點進去才載入、一次只畫一個月）──
+let allExpMonth = '';
+function expMonths(){
+  return [...new Set(db.expenses.filter(e=>e.amount>0 && e.date).map(e=>e.date.slice(0,7)))].sort((a,b)=>b.localeCompare(a));
+}
+function openAllExpSheet(){
+  const months = expMonths();
+  if(!months.length){
+    document.getElementById('all-exp-months').innerHTML='';
+    document.getElementById('all-exp-summary').textContent='';
+    document.getElementById('all-exp-list').innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">還沒有支出紀錄</div>';
+    return;
+  }
+  if(!allExpMonth || !months.includes(allExpMonth)) allExpMonth = months[0];
+  renderAllExpMonths(months);
+  renderAllExpList();
+}
+function renderAllExpMonths(months){
+  months = months || expMonths();
+  const el=document.getElementById('all-exp-months');
+  if(!el) return;
+  el.innerHTML = months.map(ym=>{
+    const [y,m]=ym.split('-');
+    const on = ym===allExpMonth;
+    return '<button onclick="selectAllExpMonth(\''+ym+'\')" style="flex-shrink:0;border:1px solid '+(on?'var(--blue,#3b82f6)':'rgba(255,255,255,.08)')+';background:'+(on?'rgba(59,130,246,.15)':'var(--bg3,#334155)')+';color:'+(on?'var(--blue,#3b82f6)':'var(--text,#f1f5f9)')+';border-radius:99px;padding:6px 12px;font-size:13px;cursor:pointer;white-space:nowrap;">'+y+'/'+parseInt(m)+'</button>';
+  }).join('');
+}
+function selectAllExpMonth(ym){ allExpMonth=ym; renderAllExpMonths(); renderAllExpList(); }
+function renderAllExpList(){
+  const el=document.getElementById('all-exp-list');
+  if(!el) return;
+  const items=db.expenses.filter(e=>e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth).sort((a,b)=>b.date.localeCompare(a.date));
+  const total=items.reduce((s,e)=>s+e.amount,0);
+  const sm=document.getElementById('all-exp-summary');
+  if(sm) sm.textContent='共 '+items.length+' 筆 · $'+Math.round(total).toLocaleString();
+  if(!items.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無支出</div>'; return; }
+  const byDate={};
+  items.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
+  let html='';
+  Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
+    const dayTotal=byDate[date].reduce((s,e)=>s+e.amount,0);
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px;background:var(--bg3,#334155);"><span style="font-size:12px;color:var(--muted,#94a3b8);">'+formatDateLabel(date)+'</span><span style="font-size:12px;color:var(--red,#f87171);">-$'+Math.round(dayTotal).toLocaleString()+'</span></div>';
+    byDate[date].forEach(e=>{
+      const icon=CAT_EMOJIS[e.category]||'🏷️';
+      const sub=e.note||e.paymentMethod||'';
+      html+='<div class="list-row" style="padding:10px 4px;">'
+        +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(148,163,184,.12);">'+icon+'</div>'
+        +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+e.category+'</div>'+(sub?'<div class="list-sub">'+sub+'</div>':'')+'</div>'
+        +'<div class="list-right" style="display:flex;align-items:center;gap:8px;"><div class="list-value" style="color:var(--red,#f87171);font-size:14px;">-$'+Math.round(e.amount).toLocaleString()+'</div>'
+        +'<button onclick="deleteExpenseInSheet('+e.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button></div>'
+        +'</div>';
+    });
+  });
+  el.innerHTML=html;
+}
+function deleteExpenseInSheet(id){
+  db.expenses=db.expenses.filter(e=>e.id!==id);
+  saveData(); updateUI();
+  const months=expMonths();
+  if(!months.includes(allExpMonth)) allExpMonth = months[0]||'';
+  if(allExpMonth){ renderAllExpMonths(months); renderAllExpList(); }
+  else {
+    document.getElementById('all-exp-months').innerHTML='';
+    document.getElementById('all-exp-summary').textContent='';
+    document.getElementById('all-exp-list').innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">還沒有支出紀錄</div>';
+  }
+  toast('已刪除');
+}
+
 function colorToRgb(c){
   const m={amber:'251,191,36',blue:'59,130,246',green:'16,185,129',red:'248,113,113',purple:'167,139,250',muted:'148,163,184'};
   return m[c]||m.muted;
@@ -1767,7 +1851,7 @@ function renderExpenseChart(){
     let map={};
     exps.forEach(e=>{const m=e.date.slice(0,7);map[m]=(map[m]||0)+e.amount;});
     const labels=Object.keys(map).sort();
-    charts.exp=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data:labels.map(l=>map[l]),backgroundColor:'rgba(248,113,113,.6)',borderRadius:6,borderColor:'#f87171',borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',font:{size:11}}},y:{ticks:{color:'#94a3b8',font:{size:11},callback:v=>fmtK(v)},grid:{color:'rgba(255,255,255,.05)'}}}}});
+    charts.exp=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data:labels.map(l=>map[l]),backgroundColor:'rgba(248,113,113,.6)',borderRadius:6,borderColor:'#f87171',borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,onClick:(evt,els)=>{ if(els&&els.length){ allExpMonth=labels[els[0].index]; openSheet('all-exp'); } },plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',font:{size:11}}},y:{ticks:{color:'#94a3b8',font:{size:11},callback:v=>fmtK(v)},grid:{color:'rgba(255,255,255,.05)'}}}}});
   } else {
     let catMap={};
     exps.forEach(e=>{catMap[e.category]=(catMap[e.category]||0)+e.amount;});
