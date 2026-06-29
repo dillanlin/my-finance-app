@@ -310,6 +310,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div class="chart-wrap"><canvas id="expense-chart"></canvas></div>
       </div>
 
+      <!-- Data coverage hint -->
+      <div id="data-coverage" style="display:none;margin:-4px 2px 12px;line-height:1.9;"></div>
+
       <!-- Actions -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <button class="btn btn-red" onclick="openSheet('expense')"><i class="fa-solid fa-minus"></i> 記帳支出</button>
@@ -1524,7 +1527,7 @@ function updateUI(){
     setTimeout(() => { renderAllocation(); renderNetworthChart(); }, 50);
   }
   renderStats(); renderDashAssets(); renderAccountChips();
-  renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars();
+  renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars(); renderDataCoverage();
 }
 
 // 累積配息（含息報酬用）
@@ -1787,6 +1790,19 @@ function renderAllExpMonths(months){
   }).join('');
 }
 function selectAllExpMonth(ym){ allExpMonth=ym; renderAllExpMonths(); renderAllExpList(); }
+// 記帳頁主畫面「已有資料月份」小提示（缺月一眼可見，點月份直接看明細）
+function renderDataCoverage(){
+  const el=document.getElementById('data-coverage');
+  if(!el) return;
+  const months=expMonths(); // 新到舊
+  if(!months.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  const chips=months.map(ym=>{
+    const [y,m]=ym.split('-');
+    return '<span onclick="allExpMonth=\''+ym+'\';openSheet(\'all-exp\')" style="display:inline-block;background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:99px;padding:3px 9px;font-size:11px;color:var(--muted,#94a3b8);cursor:pointer;margin-right:4px;">'+y.slice(2)+'/'+parseInt(m)+'</span>';
+  }).join('');
+  el.innerHTML='<span style="font-size:11px;color:var(--muted,#94a3b8);margin-right:4px;">📅 已有資料（'+months.length+' 個月）</span>'+chips;
+}
 function renderAllExpList(){
   const el=document.getElementById('all-exp-list');
   if(!el) return;
