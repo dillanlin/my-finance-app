@@ -673,7 +673,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
 
     <!-- Error -->
-    <div id="cc-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);margin-bottom:14px;flex-shrink:0;"></div>
+    <div id="cc-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:10px;font-size:13px;color:var(--red,#f87171);margin-bottom:14px;flex-shrink:0;white-space:pre-wrap;"></div>
+
+    <!-- Debug log (AI 原始回應) -->
+    <div id="cc-debug" style="display:none;flex-shrink:0;margin-bottom:14px;"></div>
   </div>
 </div>
 
@@ -823,7 +826,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <label class="form-label">入帳帳戶</label>
       <select class="form-select" id="div-account"></select>
     </div>
-    <button class="btn btn-primary" onclick="addDividend()"><i class="fa-solid fa-coins"></i> 確認入帳</button>
+    <button class="btn btn-primary" onclick="addDividend()" style="margin-bottom:8px;"><i class="fa-solid fa-coins"></i> 確認入帳</button>
+    <button class="btn btn-ghost" id="div-fetch-btn" onclick="autoFetchDividends()"><i class="fa-solid fa-cloud-arrow-down"></i> 自動抓配息（FinMind，依除息日持股）</button>
+    <div id="div-fetch-result" style="display:none;margin-top:10px;"></div>
     <div style="border-top:1px solid rgba(255,255,255,.08);margin-top:16px;padding-top:14px;">
       <div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;">配息紀錄</div>
       <div id="dividend-list"></div>
@@ -1094,10 +1099,26 @@ function doSell() {
 }
 
 // ── Dividends ─────────────────────────────────────────────
+let divFetched = [];  // 自動抓取後待確認的配息
+
 function openDividendSheet(){
   const d=document.getElementById('div-date'); if(d) d.value=today();
   const a=document.getElementById('div-amount'); if(a) a.value='';
+  const fr=document.getElementById('div-fetch-result'); if(fr){ fr.style.display='none'; fr.innerHTML=''; }
+  divFetched=[];
   renderDividendList();
+}
+
+// 核心：寫入一筆配息（同步入帳 + 計入收入；_dividend 標記供連動刪除）
+function recordDividend(symbol, date, amount, accId){
+  if(!db.dividends) db.dividends=[];
+  if(!db.incomes) db.incomes=[];
+  const id=Date.now()+Math.floor(Math.random()*100000);
+  db.dividends.push({id, date, symbol, amount, accountId:accId});
+  db.incomes.push({id, date, amount, source:'股利', targetId:accId, _dividend:true});
+  const acc=db.assets.find(a=>a.id===accId);
+  if(acc) acc.balance+=amount;
+  return id;
 }
 
 function addDividend(){
@@ -1106,17 +1127,96 @@ function addDividend(){
   const date=document.getElementById('div-date').value;
   const accId=parseInt(document.getElementById('div-account').value);
   if(!sym||!amt) return toast('⚠️ 請填寫股票與金額');
-  if(!db.dividends) db.dividends=[];
-  if(!db.incomes) db.incomes=[];
-  const id=Date.now();
-  db.dividends.push({id, date, symbol:sym, amount:amt, accountId:accId});
-  // 同步計入收入（標記 _dividend 以便連動刪除）
-  db.incomes.push({id, date, amount:amt, source:'股利', targetId:accId, _dividend:true});
-  const acc=db.assets.find(a=>a.id===accId);
-  if(acc) acc.balance+=amt;
+  recordDividend(sym, date, amt, accId);
   saveData(); updateUI(); renderDividendList();
   document.getElementById('div-amount').value='';
   toast(`✅ ${sym} 配息 $${Math.round(amt).toLocaleString()} 已入帳`);
+}
+
+// 除息日當天（含當天）依買入紀錄推算的累積持股數
+function sharesHeldAsOf(sym, dateStr){
+  return db.stock.filter(s=>s.symbol===sym && (!s.date || s.date<=dateStr)).reduce((a,s)=>a+s.shares,0);
+}
+
+// 從 FinMind 抓現金股利，依除息日當天持股數估算金額，預覽後再入帳
+async function autoFetchDividends(){
+  const fr=document.getElementById('div-fetch-result');
+  if(!db.finmindToken){
+    fr.style.display='block';
+    fr.innerHTML='<div style="padding:10px 12px;background:rgba(248,113,113,.1);border-radius:10px;font-size:12px;color:var(--red,#f87171);">⚠️ 自動抓配息需要 FinMind Token，請先到「設定」頁面設定。</div>';
+    return;
+  }
+  const syms=[...new Set(db.stock.map(s=>s.symbol))];
+  if(!syms.length) return toast('沒有持股');
+  const btn=document.getElementById('div-fetch-btn');
+  if(btn) btn.disabled=true;
+  fr.style.display='block';
+  fr.innerHTML='<div style="padding:10px;text-align:center;font-size:13px;color:var(--muted,#94a3b8);">🔄 從 FinMind 抓取配息中...</div>';
+
+  const start=(new Date().getFullYear()-2)+'-01-01';
+  let found=[], errors=[];
+  for(const sym of syms){
+    try{
+      const url=`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id=${sym}&start_date=${start}&token=${db.finmindToken}`;
+      const r=await fetch(url);
+      const data=await r.json();
+      if(data.status===200 && Array.isArray(data.data)){
+        data.data.forEach(d=>{
+          const cashPer=(parseFloat(d.CashEarningsDistribution)||0)+(parseFloat(d.CashStatutorySurplus)||0);
+          const exDate=d.CashExDividendTradingDate||d.CashDividendPaymentDate||d.date;
+          if(cashPer>0 && exDate){
+            const shares=sharesHeldAsOf(sym, exDate);
+            if(shares>0) found.push({symbol:sym, date:exDate, perShare:cashPer, shares, amount:Math.round(cashPer*shares)});
+          }
+        });
+      } else if(data.msg){ errors.push(sym+': '+data.msg); }
+    }catch(e){ errors.push(sym+': '+e.message); }
+  }
+  // 排除已記錄過的（同股票 + 同除息日）
+  const existing=new Set((db.dividends||[]).map(d=>d.symbol+'|'+d.date));
+  found=found.filter(f=> f.amount>0 && !existing.has(f.symbol+'|'+f.date));
+  found.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  divFetched=found;
+  if(btn) btn.disabled=false;
+  renderDivFetchResult(errors);
+}
+
+function renderDivFetchResult(errors){
+  const fr=document.getElementById('div-fetch-result');
+  if(!fr) return;
+  fr.style.display='block';
+  if(!divFetched.length){
+    const msg=(db.dividends&&db.dividends.length)
+      ? '✅ 沒有找到可新增的配息（可能都已記錄過）'
+      : '✅ 近兩年內查無可入帳的現金配息（或持股日晚於除息日）';
+    fr.innerHTML='<div style="padding:10px 12px;background:var(--bg3,#334155);border-radius:10px;font-size:12px;color:var(--muted,#94a3b8);">'+msg+((errors&&errors.length)?'<br><span style="color:#fbbf24;">'+errors.slice(0,3).join('；')+'</span>':'')+'</div>';
+    return;
+  }
+  const cards=divFetched.map((f,i)=>'<div style="background:var(--card,#1e293b);border:1px solid rgba(52,211,153,.3);border-radius:10px;padding:10px;margin-bottom:8px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+      +'<div><div style="font-size:14px;font-weight:600;">'+f.symbol+' <span style="font-size:11px;color:var(--muted,#94a3b8);">除息 '+f.date+'</span></div>'
+        +'<div style="font-size:11px;color:var(--muted,#94a3b8);">每股 $'+f.perShare+' × '+f.shares.toLocaleString()+' 股</div></div>'
+      +'<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:12px;color:var(--muted,#94a3b8);">$</span>'
+        +'<input type="number" value="'+f.amount+'" onchange="divFetched['+i+'].amount=parseFloat(this.value)||0" style="width:90px;background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:#34d399;font-size:14px;font-weight:600;text-align:right;"></div>'
+    +'</div></div>').join('');
+  fr.innerHTML='<div style="font-size:12px;color:var(--muted,#94a3b8);margin:4px 0 8px;">找到 '+divFetched.length+' 筆配息（金額可微調，入帳到上方選的帳戶）</div>'
+    +cards
+    +'<button class="btn btn-primary" onclick="addFetchedDividends()" style="margin-top:4px;"><i class="fa-solid fa-circle-check"></i> 全部入帳（'+divFetched.length+' 筆）</button>';
+}
+
+function addFetchedDividends(){
+  if(!divFetched.length) return;
+  const accId=parseInt(document.getElementById('div-account').value);
+  let n=0, tot=0;
+  divFetched.forEach(f=>{
+    if(!f.amount||f.amount<=0) return;
+    recordDividend(f.symbol, f.date, f.amount, accId);
+    n++; tot+=f.amount;
+  });
+  divFetched=[];
+  saveData(); updateUI(); renderDividendList();
+  const fr=document.getElementById('div-fetch-result'); if(fr){ fr.style.display='none'; fr.innerHTML=''; }
+  toast(`✅ 已入帳 ${n} 筆配息，共 $${Math.round(tot).toLocaleString()}`);
 }
 
 function deleteDividend(id){
@@ -2840,7 +2940,10 @@ function openCcOcrSheet() {
   document.getElementById('cc-results').style.display = 'none';
   document.getElementById('cc-error').style.display = 'none';
   document.getElementById('cc-result-list').innerHTML = '';
+  const dbg = document.getElementById('cc-debug');
+  if(dbg){ dbg.style.display = 'none'; dbg.innerHTML = ''; }
   ccParsedItems = [];
+  ccDebugLog = [];
 }
 
 async function handleCcUpload(input) {
@@ -2859,6 +2962,9 @@ async function handleCcUpload(input) {
   document.getElementById('cc-idle').style.display = 'none';
   document.getElementById('cc-error').style.display = 'none';
   document.getElementById('cc-loading').style.display = 'block';
+  const dbgEl = document.getElementById('cc-debug');
+  if(dbgEl){ dbgEl.style.display = 'none'; dbgEl.innerHTML = ''; }
+  ccDebugLog = [];
 
   let allItems = [];
   let errorCount = 0;
@@ -2883,19 +2989,20 @@ async function handleCcUpload(input) {
 
     try {
       const base64 = await fileToBase64(file);
-      const items = await callGeminiCcOcr(base64, file.type, cardName);
+      const items = await callGeminiCcOcr(base64, file.type, cardName, file.name);
       allItems = allItems.concat(items);
     } catch(err) {
       errorCount++;
       console.warn('Screenshot', i+1, 'failed:', err.message);
       lastError = err.message;
+      ccDebugLog.push({ file: file.name, stage: '錯誤', count: 0, finishReason: '', raw: '❌ '+err.message });
       // If it\'s a rate limit error, wait and retry once
       if(err.message && (err.message.includes('429') || err.message.includes('quota') || err.message.includes('rate'))) {
         document.getElementById('cc-loading-text').textContent = `額度暫達上限，等待 60 秒後重試第 ${i+1} 張...`;
         await new Promise(r => setTimeout(r, 60000));
         try {
           const base64 = await fileToBase64(file);
-          const items = await callGeminiCcOcr(base64, file.type, cardName);
+          const items = await callGeminiCcOcr(base64, file.type, cardName, file.name);
           allItems = allItems.concat(items);
           errorCount--; // Recovered
         } catch(retryErr) {
@@ -2922,44 +3029,40 @@ async function handleCcUpload(input) {
     }
   });
 
-  // ── Smart deduplication ──
-  // 1. Within current batch: exact match (date+merchant+amount) = duplicate
-  // 2. Against existing db.expenses: also check date+amount (allow 1-day diff for posting lag)
+  // ── 智能去重（依 金額 + 日期 + 地點/商家）──
+  // 1. 批內：同日 + 同商家 + 同金額 = 完全重複，直接去掉
+  // 2. 與既有資料：金額相同 + 日期±1天 + 商家相符（或既有無商家）= 疑似重複，標記提醒
   const seen = new Map();
   let dupCount = 0;
   let possibleDupCount = 0;
   ccParsedItems = [];
-  const existingKeys = new Set(db.expenses.map(e => e.date+'|'+e.amount));
+  const existing = db.expenses
+    .filter(e => e.amount)
+    .map(e => ({ date: e.date, amt: Math.abs(e.amount), m: ccMerchantNorm(e.note) }));
 
   allItems.forEach(it => {
     if(!it.amount || !it.date) return;
     const amt = Math.abs(parseFloat(it.amount));
+    const m = ccMerchantNorm(it.merchant);
 
-    // Within batch exact match
-    const exactKey = it.date+'|'+(it.merchant||'').trim()+'|'+amt;
-    if(seen.has(exactKey)) {
-      dupCount++;
-      return;
-    }
+    // 批內完全重複
+    const exactKey = it.date+'|'+m+'|'+amt;
+    if(seen.has(exactKey)) { dupCount++; return; }
     seen.set(exactKey, true);
 
-    // Against existing data: date+amount match = possible duplicate
-    // Also check 1 day before/after (for Line Pay vs credit card posting delay)
+    // 與既有資料比對（日期±1天，商家相符或一方無商家）
     const dateObj = new Date(it.date);
     let isPossibleDup = false;
-    for(let offset = -1; offset <= 1; offset++) {
-      const checkDate = new Date(dateObj);
-      checkDate.setDate(checkDate.getDate() + offset);
-      const checkKey = checkDate.toISOString().split('T')[0]+'|'+amt;
-      if(existingKeys.has(checkKey)) {
+    for(let offset = -1; offset <= 1 && !isPossibleDup; offset++) {
+      const cd = new Date(dateObj);
+      cd.setDate(cd.getDate() + offset);
+      const ds = cd.toISOString().split('T')[0];
+      if(existing.some(e => e.amt === amt && e.date === ds &&
+          (!e.m || !m || e.m === m || e.m.includes(m) || m.includes(e.m)))) {
         isPossibleDup = true;
-        break;
       }
     }
-    if(isPossibleDup) {
-      it._possibleDup = true;
-      possibleDupCount++;
-    }
+    if(isPossibleDup) { it._possibleDup = true; possibleDupCount++; }
     ccParsedItems.push(it);
   });
 
@@ -2968,17 +3071,18 @@ async function handleCcUpload(input) {
   document.getElementById('cc-results').style.display = 'flex';
 
   renderCcResults();
+  renderCcDebug();
 
   // Show summary toast or error
   if(ccParsedItems.length === 0 && errorCount > 0) {
     document.getElementById('cc-results').style.display = 'none';
     document.getElementById('cc-error').style.display = 'block';
-    document.getElementById('cc-error').textContent = '❌ 全部 ' + errorCount + ' 張都辨識失敗。\n\n常見原因：\n• 截圖太模糊 → 重截更清楚的\n• Gemini 伺服器忙線 → 稍後再試\n• Token 額度用完 → 隔天再試\n\n錯誤訊息：' + lastError;
+    document.getElementById('cc-error').textContent = '❌ 全部 ' + errorCount + ' 張都辨識失敗。\n\n常見原因：\n• 截圖太模糊 → 重截更清楚的\n• Gemini 伺服器忙線 → 稍後再試\n• Token 額度用完 → 隔天再試\n\n錯誤訊息：' + lastError + '\n\n👇 展開下方「除錯紀錄」可看 AI 原始回應';
     document.getElementById('cc-idle').style.display = 'none';
   } else if(ccParsedItems.length === 0) {
     document.getElementById('cc-results').style.display = 'none';
     document.getElementById('cc-error').style.display = 'block';
-    document.getElementById('cc-error').textContent = '⚠️ AI 沒辨識到交易紀錄。\n\n建議檢查：\n• 截圖是否包含完整的「日期+商家+金額」三行\n• 截圖是否清楚（沒被遮擋、字夠大）\n• 試試只上傳 1-2 張先測試';
+    document.getElementById('cc-error').textContent = '⚠️ AI 沒辨識到交易紀錄。\n\n建議檢查：\n• 截圖是否清楚（沒被遮擋、字夠大）\n• 試試只上傳 1-2 張先測試\n\n👇 展開下方「除錯紀錄」看 AI 到底讀到什麼，把內容貼給我可協助調整';
     document.getElementById('cc-idle').style.display = 'none';
   } else {
     let msg = '✅ 辨識完成 ' + ccParsedItems.length + ' 筆';
@@ -3000,122 +3104,104 @@ function fileToBase64(file) {
   });
 }
 
-async function callGeminiCcOcr(base64, mediaType, cardName) {
-  const prompt = `這是一張台灣信用卡帳單截圖（可能是台新、國泰、玉山等銀行），畫面顯示「刷卡消費」明細。每筆交易通常是 3 行：
+// 商家名稱正規化（去重比對用）：轉小寫、去 LPEPI*/LINEPAY* 前綴與符號空白
+function ccMerchantNorm(s){
+  return String(s||'').toLowerCase().replace(/^(lpepi|linepay)\*/,'').replace(/[\s*\-_.,()（）·、]/g,'');
+}
 
-第1行：日期 + 卡號末4碼，例如「06/28  末4碼 0503」
-第2行：商家名稱（中文或英文，可能有 LPEPI*/LINEPAY* 前綴）
-第3行：金額，例如「NT$102」或「NT$1,288」+ 可能有「可分期」標籤
+// in-app 除錯紀錄（iOS 看不到 console，改在畫面顯示 AI 原始回應）
+let ccDebugLog = [];
 
-【實際範例】
-範例 1：
-  06/28  末4碼 0503
-  TRA
-  NT$102
-→ {"date":"2026-06-28","merchant":"台鐵","amount":102,"category":"交通","paymentMethod":"信用卡"}
-
-範例 2：
-  06/28  末4碼 0503
-  LINEPAY*HSIANGHSIANGTS
-  NT$220
-→ {"date":"2026-06-28","merchant":"HSIANGHSIANGTS","amount":220,"category":"餐費","paymentMethod":"Line Pay"}
-
-範例 3：
-  06/27  末4碼 0503
-  全聯實業股份有限公司
-  NT$505
-→ {"date":"2026-06-27","merchant":"全聯","amount":505,"category":"購物","paymentMethod":"信用卡"}
-
-範例 4：
-  06/24  末4碼 0503
-  FITNESS FOCTORY  可分期
-  NT$1,288
-→ {"date":"2026-06-24","merchant":"健身工廠","amount":1288,"category":"娛樂","paymentMethod":"信用卡"}
-
-【規則】
-1. 看到「2026/06」或「2026/05」這類大標題 → 用來判斷年份和月份
-2. 「末4碼 0503」是卡號，不是商家，請忽略
-3. 「可分期」「信用卡消費折抵」「2026/MM」是標籤或分隔，不是交易，請跳過
-4. LPEPI*XXX / LINEPAY*XXX → merchant 是 XXX（去掉前綴），paymentMethod 寫「Line Pay」
-5. 沒有 LPEPI/LINEPAY 前綴 → paymentMethod 寫「信用卡」
-6. 全英文音譯試著翻成中文（LIANGSHEHANPAIG→良食漢堡、ZAOANMEIZHICHEN→早安美芝城、HONGWENENTERPR→宏文企業、DAYUNGSTEA→大苑子、LIKETEASHOP→來一杯、HSIANGHSIANGTS→香香脆雞、DEZHENGGAOXIONG→德正高雄、DAQIAOCOLDDRINK→大橋頭冷飲、DEJENGOOLONGTEA→德正烏龍茶、SPICYQUEEN→辣麻女王、HSINIRAMEN→新一拉麵），辨識不出來則保留英文
-7. 金額去除逗號（NT$1,288 → 1288）
-8. 退款金額用負數
-
-【常見商家對應】
-- TRA / 台鐵 / 火車 → 交通
-- YOUBIKE / Ubike → 交通
-- 中油 / 加油 / CPC → 交通
-- WonderPet / Pet → 住房（寵物）
-- 全聯 / 家樂福 / 全家 / 7-11 / HiLife / LPEPI*HiLife → 餐費（多為食物）
-- IKEA / 家具 → 住房
-- ANTHROPIC / Claude / ChatGPT / Netflix / Spotify → 訂閱
-- TEA / 茶 / ColdDrink / 飲料 → 餐費
-- Ramen / 拉麵 / 火鍋 / 燒烤 → 餐費
-- ProspectHospita / 醫院 / 診所 → 醫療
-- 公用事業 / 電費 / 水費 / 瓦斯 → 住房
-- FITNESS FOCTORY / 健身 → 娛樂
-
-【回傳格式】純 JSON 陣列，不要 markdown、不要說明文字、不要前後綴：
-[{"date":"YYYY-MM-DD","merchant":"商家","amount":數字,"category":"類別","paymentMethod":"支付方式"}]
-
-如果完全沒有交易可辨識，回傳空陣列 []`;
-
+// 共用：呼叫 Gemini Vision。useJson=true 用 JSON 模式，false 用純文字（後援）
+async function geminiOcrFetch(base64, mediaType, prompt, useJson){
   const model = db.geminiModel || 'gemini-2.0-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
+  const genCfg = { temperature: 0, maxOutputTokens: 4000 };
+  if(useJson) genCfg.responseMimeType = 'application/json';
   const r = await fetch(url, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
-      contents: [{
-        parts: [
-          { inline_data: { mime_type: mediaType, data: base64 } },
-          { text: prompt }
-        ]
-      }],
-      generationConfig: { temperature: 0, maxOutputTokens: 4000, responseMimeType: 'application/json' }
+      contents: [{ parts: [ { inline_data: { mime_type: mediaType, data: base64 } }, { text: prompt } ] }],
+      generationConfig: genCfg
     })
   });
-
-  if(!r.ok) {
+  if(!r.ok){
     const err = await r.json().catch(()=>({}));
     throw new Error(err.error?.message || 'HTTP '+r.status);
   }
-
   const data = await r.json();
-  // Combine all parts for long responses
   const parts = data.candidates?.[0]?.content?.parts || [];
   const text = parts.map(p => p.text || '').join('');
   const finishReason = data.candidates?.[0]?.finishReason || '';
+  return { text, finishReason };
+}
 
-  if(!text) {
-    console.warn('OCR no text. Full response:', JSON.stringify(data).substring(0, 500));
-    throw new Error('AI 未回傳結果（可能畫面太複雜，請試試只截一張）');
-  }
-
-  // Clean up markdown wrappers
+// 從可能含 markdown / 多餘文字的回應中擷取 JSON 陣列
+function parseOcrArray(text){
+  if(!text) return null;
   let clean = text.replace(/```json|```/g, '').trim();
-  // Try to extract JSON array if AI added extra text
   const arrMatch = clean.match(/\[[\s\S]*\]/);
   if(arrMatch) clean = arrMatch[0];
+  try { const items = JSON.parse(clean); return Array.isArray(items) ? items : null; }
+  catch(e){ return null; }
+}
 
-  let items;
-  try {
-    items = JSON.parse(clean);
-  } catch(parseErr) {
-    console.warn('OCR parse failed. Raw text:', text.substring(0, 500));
-    throw new Error('AI 回傳格式錯誤：' + parseErr.message);
+async function callGeminiCcOcr(base64, mediaType, cardName, fileName) {
+  const prompt = `這是一張台灣的消費／信用卡紀錄截圖，來源可能是：銀行 App 的消費明細清單、信用卡帳單、Line Pay 交易紀錄、或手機通知。版面可能是「一筆一行」「一筆多行」或卡片式，請勿假設固定格式，盡量把畫面上每一筆可辨識的消費都抓出來。
+
+【常見版面：台新 App「刷卡消費」】每筆是一張卡片：
+- 左上：「MM/DD ｜ 末4碼 0503」（日期 + 卡號末四碼）
+- 左下：商家名稱
+- 右側：「NT$金額」與一個 > 箭頭；金額上方有時有「可分期」標籤
+- 清單由新到舊，畫面最底下可能出現「2026/05」這種月份分隔，用來判斷上方各筆交易的年月
+
+每一筆要抓三個核心欄位：日期、商家名稱、金額。
+
+【判讀規則】
+1. 日期：可能是 06/28、6/28、2026/06/28、06-28 等。若畫面有「2026/05」「2026年6月」這類月份標題，用它補年份。一律輸出 YYYY-MM-DD；真的看不到年份才用今年。
+2. 商家：中英文皆可。忽略卡號（末4碼 0503）、卡別、分期標籤（可分期）、折抵字樣、> 箭頭、頁首頁尾與分隔線。
+3. 金額：可能寫成 NT$102、$102、102 元、1,288。去掉逗號與貨幣符號只留數字。退款／退刷用負數。
+4. 支付方式：開頭是 LPEPI*、LINEPAY*，或商家寫「連加網路商業股份有限公司」→ 這些都是 Line Pay，paymentMethod 填「Line Pay」、商家取星號後面的名稱（連加網路則商家寫「Line Pay」）；其餘填「信用卡」。
+5. 英文音譯盡量翻中文（例：ZAOANMEIZHICHEN→早安美芝城、DAYUNGSTEA→大苑子、HSINIRAMEN→新一拉麵、LIANGSHEHANPAIG→良食漢堡、LIKETEASHOP→來一杯、TRA→台鐵、YOUBIKE→YouBike、WonderPet→寵物店、ProspectHospita→醫院、ANTHROPIC/CLAUDE→Claude 訂閱），翻不出來就保留原文。
+6. 粗略分類為：餐費/交通/購物/娛樂/醫療/住房/訂閱/其他。對應：餐飲超商飲料茶→餐費；TRA台鐵高鐵YouBike加油停車→交通；賣場網購→購物；Netflix/Spotify/Claude/ChatGPT/訂閱制→訂閱；醫院診所藥局→醫療；水電瓦斯房租寵物/公用事業-電煤氣衛生→住房；其餘→其他。
+
+【範例】
+「06/04 末4碼0503 / TRA / NT$71」→ {"date":"2026-06-04","merchant":"台鐵","amount":71,"category":"交通","paymentMethod":"信用卡"}
+「06/07 LPEPI*WonderPet NT$924」→ {"date":"2026-06-07","merchant":"寵物店","amount":924,"category":"住房","paymentMethod":"Line Pay"}
+「06/05 ANTHROPIC* CLAUDE SUB NT$630」→ {"date":"2026-06-05","merchant":"Claude 訂閱","amount":630,"category":"訂閱","paymentMethod":"信用卡"}
+「06/07 連加網路商業股份有限公司 NT$95」→ {"date":"2026-06-07","merchant":"Line Pay","amount":95,"category":"其他","paymentMethod":"Line Pay"}
+
+【回傳格式】只回純 JSON 陣列，不要 markdown、不要任何說明文字：
+[{"date":"YYYY-MM-DD","merchant":"商家","amount":數字,"category":"類別","paymentMethod":"Line Pay 或 信用卡"}]
+真的完全沒有可辨識的消費才回 []`;
+
+  // 第一次：JSON 模式
+  let res, items = null;
+  res = await geminiOcrFetch(base64, mediaType, prompt, true);
+  items = parseOcrArray(res.text);
+
+  // 後援：JSON 模式回空陣列或解析失敗 → 改用純文字模式重試一次
+  let usedFallback = false;
+  if(!items || items.length === 0){
+    try {
+      const res2 = await geminiOcrFetch(base64, mediaType, prompt, false);
+      const items2 = parseOcrArray(res2.text);
+      if(items2 && items2.length){ res = res2; items = items2; usedFallback = true; }
+      else if(items === null && items2 !== null){ res = res2; items = items2; usedFallback = true; }
+    } catch(e2){ /* 保留第一次結果 */ }
   }
 
-  if(!Array.isArray(items)) {
-    throw new Error('AI 回傳格式錯誤（不是陣列）');
-  }
+  // 記錄除錯資訊（畫面可展開檢視）
+  ccDebugLog.push({
+    file: fileName || '',
+    stage: usedFallback ? '純文字後援' : 'JSON',
+    count: items ? items.length : 0,
+    finishReason: res.finishReason || '',
+    raw: (res.text || '(空白回應)').substring(0, 800)
+  });
 
-  if(items.length === 0) {
-    console.log('OCR returned empty array. finishReason:', finishReason);
-  }
-
-  // Add cardName as note to each item
+  if(items === null) throw new Error('AI 回傳格式無法解析（請展開除錯紀錄查看原始回應）');
   return items.map(it => ({...it, _cardName: cardName}));
 }
 
@@ -3173,6 +3259,22 @@ function renderCcResults() {
   }).join('');
 }
 
+function renderCcDebug() {
+  const el = document.getElementById('cc-debug');
+  if(!el) return;
+  if(!ccDebugLog.length){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'block';
+  const rows = ccDebugLog.map((d, i) => {
+    const head = '#' + (i+1) + ' ' + (d.file || '') + ' · ' + (d.count + ' 筆') + (d.stage ? (' · ' + d.stage) : '') + (d.finishReason && d.finishReason !== 'STOP' ? (' · ' + d.finishReason) : '');
+    const raw = String(d.raw || '').replace(/</g, '&lt;');
+    return '<div style="border-top:1px solid rgba(255,255,255,.08);padding:6px 0;">'
+      + '<div style="font-size:11px;color:var(--muted,#94a3b8);">' + head + '</div>'
+      + '<pre style="white-space:pre-wrap;word-break:break-all;font-size:10px;color:#94a3b8;margin-top:4px;max-height:140px;overflow:auto;background:var(--bg,#0f172a);border-radius:6px;padding:6px;">' + raw + '</pre>'
+      + '</div>';
+  }).join('');
+  el.innerHTML = '<details><summary style="font-size:12px;color:var(--muted,#94a3b8);cursor:pointer;padding:6px 0;">🐞 除錯紀錄（' + ccDebugLog.length + ' 張 · 點開看 AI 原始回應）</summary><div style="margin-top:4px;">' + rows + '</div></details>';
+}
+
 function importCcData() {
   if(!ccParsedItems.length) {
     toast('沒有可匯入的資料');
@@ -3187,12 +3289,14 @@ function importCcData() {
   const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
 
   let added = 0, totalAmt = 0;
-  const keys = new Set(db.expenses.map(expenseKey));
+  // 跳過完全重複：同日 + 同金額 + 同商家（地點）
+  const ccKey = (date, amt, merchant) => date+'|'+Math.abs(amt)+'|'+ccMerchantNorm(merchant);
+  const keys = new Set(db.expenses.map(e => ccKey(e.date, e.amount, e.note)));
 
   ccParsedItems.forEach(it => {
     const amt = parseFloat(it.amount) || 0;
     if(amt === 0 || !it.date) return;
-    const key = expenseKey({date:it.date, amount:amt, category:it.category});
+    const key = ccKey(it.date, amt, it.merchant);
     if(keys.has(key)) return;
     db.expenses.push({
       id: Date.now() + Math.random(),
