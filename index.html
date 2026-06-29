@@ -130,7 +130,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sheet-ai .ai-head{padding:12px 20px 12px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.06);}
 .sheet-ai .ai-body{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px 20px;}
 .sheet-ai .ai-foot{padding:12px 20px calc(12px + var(--safe-bot));flex-shrink:0;border-top:1px solid rgba(255,255,255,.06);background:var(--bg2);}
-.sheet-handle{width:36px;height:4px;background:var(--bg3);border-radius:99px;margin:0 auto 16px;}
+.sheet-handle{width:40px;height:5px;background:var(--bg3);border-radius:99px;margin:2px auto 16px;cursor:pointer;position:relative;}
+.sheet-handle::after{content:"";position:absolute;top:-14px;bottom:-10px;left:-60px;right:-60px;}
 .sheet-title{font-size:18px;font-weight:700;margin-bottom:20px;}
 
 /* ── Price badge ── */
@@ -1022,6 +1023,7 @@ function switchPage(name, tab) {
 }
 
 // ── Sheet control ─────────────────────────────────────────
+let _sheetHist = false;  // 是否已為開啟中的 sheet 推入歷史狀態
 function openSheet(name) {
   if(name==='ocr') resetOcrSheet();
   if(name==='budget') { openBudgetSheet(); }
@@ -1031,9 +1033,30 @@ function openSheet(name) {
   if(name==='cc-ocr') { openCcOcrSheet(); }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
+  // 推一個歷史狀態，讓手機「返回」手勢/按鈕能關閉 sheet 而不是離開 App
+  if(!_sheetHist){ _sheetHist=true; try{ history.pushState({sheet:true},''); }catch(e){} }
 }
-function closeSheet(name) { document.getElementById('sheet-'+name).classList.remove('open'); }
+// 接受短名（dividend）或完整 id（sheet-dividend）
+function closeSheet(name) {
+  const id = (''+name).indexOf('sheet-')===0 ? name : 'sheet-'+name;
+  const el = document.getElementById(id);
+  if(el) el.classList.remove('open');
+  // 沒有其他開啟中的 sheet 了 → 收回先前推入的歷史狀態
+  if(_sheetHist && !document.querySelector('.sheet-overlay.open')){ _sheetHist=false; try{ history.back(); }catch(e){} }
+}
 function closeSheetOnBg(e, name) { if(e.target===e.currentTarget) closeSheet(name); }
+// 點上方小握把也可關閉
+document.addEventListener('click', function(e){
+  if(e.target && e.target.classList && e.target.classList.contains('sheet-handle')){
+    const ov = e.target.closest('.sheet-overlay');
+    if(ov) closeSheet(ov.id);
+  }
+});
+// 手機返回鍵/手勢 → 關閉最上層 sheet（不離開 App）
+window.addEventListener('popstate', function(){
+  const open = document.querySelectorAll('.sheet-overlay.open');
+  if(open.length){ _sheetHist=false; open.forEach(o=>o.classList.remove('open')); }
+});
 
 function populateSheetSelects(name) {
   if(name==='expense') refreshCatSelect();
