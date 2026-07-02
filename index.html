@@ -887,6 +887,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <label class="form-label">扣款帳戶</label>
       <select class="form-select" id="exp-account"></select>
     </div>
+    <label class="form-label" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;">
+      <input type="checkbox" id="exp-reimb" style="width:18px;height:18px;">
+      🧾 可報帳（不計入個人支出，餘額照扣）
+    </label>
     <button class="btn btn-red" onclick="addExpense()"><i class="fa-solid fa-minus"></i> 記帳</button>
   </div>
 </div>
@@ -1057,6 +1061,7 @@ function openSheet(name) {
   if(name==='dividend') { openDividendSheet(); }
   if(name==='cc-ocr') { openCcOcrSheet(); }
   if(name==='all-exp') { openAllExpSheet(); }
+  if(name==='expense') { const r=document.getElementById('exp-reimb'); if(r) r.checked=false; }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
   // 推一個歷史狀態，讓手機「返回」手勢/按鈕能關閉 sheet 而不是離開 App
@@ -1427,7 +1432,7 @@ function updateExpPreview(val){
   const amt=parseFloat(val)||0;
   if(!amt){el.textContent='';return;}
   const ym=new Date().toISOString().slice(0,7);
-  const monthTotal=db.expenses.filter(e=>e.amount>0&&e.date.startsWith(ym)).reduce((s,e)=>s+e.amount,0);
+  const monthTotal=db.expenses.filter(e=>e.amount>0&&!e.reimb&&e.date.startsWith(ym)).reduce((s,e)=>s+e.amount,0);
   el.textContent=`本月累計：$${Math.round(monthTotal+amt).toLocaleString()}`;
 }
 
@@ -1436,13 +1441,17 @@ function addExpense() {
   const cat=document.getElementById('exp-cat').value;
   const accId=parseInt(document.getElementById('exp-account').value);
   const date=document.getElementById('exp-date').value;
+  const reimb=document.getElementById('exp-reimb').checked;
   if(!amt) return toast('⚠️ 請輸入金額');
   const acc=db.assets.find(a=>a.id===accId);
-  db.expenses.push({id:Date.now(), date, amount:amt, category:cat, paymentMethod:acc?.name});
+  const rec={id:Date.now(), date, amount:amt, category:cat, paymentMethod:acc?.name};
+  if(reimb) rec.reimb=true;
+  db.expenses.push(rec);
   if(acc) acc.balance-=amt;
   saveData(); updateUI(); closeSheet('expense');
-  toast(`✅ 記帳 $${amt} (${cat})`);
+  toast(reimb ? `🧾 已記帳 $${amt}（報帳，不計入支出）` : `✅ 記帳 $${amt} (${cat})`);
   document.getElementById('exp-amt').value='';
+  document.getElementById('exp-reimb').checked=false;
 }
 
 function addIncome() {
@@ -1572,7 +1581,7 @@ function renderStats(){
   document.getElementById('hw-stock').textContent=fmt(mkt);
   document.getElementById('hw-cash').textContent=fmt(cash);
   const ym=new Date().toISOString().slice(0,7);
-  const mExp=db.expenses.filter(e=>e.amount>0&&e.date.startsWith(ym)).reduce((s,e)=>s+e.amount,0);
+  const mExp=db.expenses.filter(e=>e.amount>0&&!e.reimb&&e.date.startsWith(ym)).reduce((s,e)=>s+e.amount,0);
   const hwMe=document.getElementById('hw-month-exp');
   if(hwMe) hwMe.textContent=fmt(mExp);
   updateFIRE();
@@ -1718,7 +1727,7 @@ function deleteExpense(id){
 
 function renderRecentExpenses(){
   const el=document.getElementById('recent-expenses');
-  const recent=[...db.expenses].filter(e=>e.amount>0).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30);
+  const recent=[...db.expenses].filter(e=>e.amount>0 && !e.reimb).sort((a,b)=>b.date.localeCompare(a.date)).slice(0,30);
   if(!recent.length){
     el.innerHTML=`<div style="text-align:center;padding:32px 20px;">
       <div style="font-size:36px;margin-bottom:10px;opacity:.4;">🧾</div>
@@ -1817,16 +1826,19 @@ function renderAllExpList(){
   const el=document.getElementById('all-exp-list');
   if(!el) return;
   const items=db.expenses.filter(e=>e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth).sort((a,b)=>b.date.localeCompare(a.date));
-  const total=items.reduce((s,e)=>s+e.amount,0);
+  const personal=items.filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
+  const reimbTot=items.filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
   const sm=document.getElementById('all-exp-summary');
-  if(sm) sm.textContent='共 '+items.length+' 筆 · $'+Math.round(total).toLocaleString();
+  if(sm) sm.innerHTML='共 '+items.length+' 筆 · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'（待收款）</span>':'');
   if(!items.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無支出</div>'; return; }
   const byDate={};
   items.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
   let html='';
   Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
-    const dayTotal=byDate[date].reduce((s,e)=>s+e.amount,0);
-    html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px;background:var(--bg3,#334155);"><span style="font-size:12px;color:var(--muted,#94a3b8);">'+formatDateLabel(date)+'</span><span style="font-size:12px;color:var(--red,#f87171);">-$'+Math.round(dayTotal).toLocaleString()+'</span></div>';
+    const dayPersonal=byDate[date].filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
+    const dayReimb=byDate[date].filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
+    const dayRight = '<span style="font-size:12px;color:var(--red,#f87171);">-$'+Math.round(dayPersonal).toLocaleString()+'</span>'+(dayReimb>0?' <span style="font-size:11px;color:#fbbf24;">(報帳 $'+Math.round(dayReimb).toLocaleString()+')</span>':'');
+    html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px;background:var(--bg3,#334155);"><span style="font-size:12px;color:var(--muted,#94a3b8);">'+formatDateLabel(date)+'</span>'+dayRight+'</div>';
     byDate[date].forEach(e=>{
       if(e.id===allExpEditId){
         // 編輯模式
@@ -1838,6 +1850,7 @@ function renderAllExpList(){
           +'</div>'
           +'<select id="aee-cat" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:6px;">'+opts+'</select>'
           +'<input type="text" id="aee-note" value="'+String(e.note||e.paymentMethod||'').replace(/"/g,'&quot;')+'" placeholder="備註/店家" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:8px;">'
+          +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="aee-reimb"'+(e.reimb?' checked':'')+' style="width:16px;height:16px;">🧾 可報帳（不計入支出）</label>'
           +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
             +'<button onclick="cancelAllExpEdit()" class="btn btn-ghost btn-sm">取消</button>'
             +'<button onclick="saveAllExpEdit('+e.id+')" class="btn btn-primary btn-sm">儲存</button>'
@@ -1846,10 +1859,12 @@ function renderAllExpList(){
       } else {
         const icon=CAT_EMOJIS[e.category]||'🏷️';
         const sub=e.note||e.paymentMethod||'';
-        html+='<div class="list-row" style="padding:10px 4px;">'
+        const badge=e.reimb?'<span style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.15);border-radius:4px;padding:1px 5px;margin-left:6px;">🧾報帳</span>':'';
+        const amtColor=e.reimb?'#fbbf24':'var(--red,#f87171)';
+        html+='<div class="list-row" style="padding:10px 4px;'+(e.reimb?'opacity:.75;':'')+'">'
           +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(148,163,184,.12);">'+icon+'</div>'
-          +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+e.category+'</div>'+(sub?'<div class="list-sub">'+sub+'</div>':'')+'</div>'
-          +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:var(--red,#f87171);font-size:14px;">-$'+Math.round(e.amount).toLocaleString()+'</div>'
+          +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+e.category+badge+'</div>'+(sub?'<div class="list-sub">'+sub+'</div>':'')+'</div>'
+          +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:'+amtColor+';font-size:14px;">-$'+Math.round(e.amount).toLocaleString()+'</div>'
           +'<button onclick="editAllExp('+e.id+')" style="background:rgba(59,130,246,.15);border:none;color:var(--blue,#3b82f6);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✎</button>'
           +'<button onclick="deleteExpenseInSheet('+e.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button></div>'
           +'</div>';
@@ -1871,6 +1886,7 @@ function saveAllExpEdit(id){
   if(c) e.category=c;
   if(!isNaN(a) && a>0) e.amount=a;
   e.note=n;
+  if(document.getElementById('aee-reimb').checked) e.reimb=true; else delete e.reimb;
   allExpEditId=null;
   saveData(); updateUI();
   const months=expMonths();
@@ -1929,7 +1945,7 @@ function setCfSeg(idx,el){
 function renderExpenseChart(){
   const ctx=document.getElementById('expense-chart');
   if(charts.exp) charts.exp.destroy();
-  const exps=db.expenses.filter(e=>e.amount>0);
+  const exps=db.expenses.filter(e=>e.amount>0 && !e.reimb);
   if(!exps.length){ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height);return;}
 
   if(cfSegIdx===0){
@@ -2362,8 +2378,8 @@ async function runAiReport() {
   })();
 
   // ── Expenses ──
-  const thisExp = db.expenses.filter(e => e.amount>0 && e.date.startsWith(ym));
-  const lastExp = db.expenses.filter(e => e.amount>0 && e.date.startsWith(prevYm));
+  const thisExp = db.expenses.filter(e => e.amount>0 && !e.reimb && e.date.startsWith(ym));
+  const lastExp = db.expenses.filter(e => e.amount>0 && !e.reimb && e.date.startsWith(prevYm));
   const thisExpMap = {}, lastExpMap = {};
   thisExp.forEach(e => thisExpMap[e.category] = (thisExpMap[e.category]||0) + e.amount);
   lastExp.forEach(e => lastExpMap[e.category] = (lastExpMap[e.category]||0) + e.amount);
@@ -3009,7 +3025,7 @@ function autoSnapshotIfNeeded(){
 function getThisMonthExpenses() {
   const ym = new Date().toISOString().slice(0,7);
   const map = {};
-  db.expenses.filter(e => e.amount > 0 && e.date.startsWith(ym)).forEach(e => {
+  db.expenses.filter(e => e.amount > 0 && !e.reimb && e.date.startsWith(ym)).forEach(e => {
     map[e.category] = (map[e.category] || 0) + e.amount;
   });
   return map;
@@ -3457,6 +3473,9 @@ function renderCcResults() {
           style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:14px;font-weight:600;text-align:right;"
           onchange="ccParsedItems[${i}].amount=parseFloat(this.value)||0">
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#94a3b8);margin-top:8px;cursor:pointer;">
+        <input type="checkbox" ${it.reimb?'checked':''} onchange="ccParsedItems[${i}].reimb=this.checked" style="width:16px;height:16px;">🧾 可報帳（不計入支出）
+      </label>
     </div>`;
   }).join('');
 }
@@ -3500,14 +3519,16 @@ function importCcData() {
     if(amt === 0 || !it.date) return;
     const key = ccKey(it.date, amt, it.merchant);
     if(keys.has(key)) return;
-    db.expenses.push({
+    const rec = {
       id: Date.now() + Math.random(),
       date: it.date,
       amount: amt,
       category: it.category || '其他',
       paymentMethod: it.paymentMethod || cardName,
       note: it.merchant || ''
-    });
+    };
+    if(it.reimb) rec.reimb = true;
+    db.expenses.push(rec);
     keys.add(key);
     account.balance -= amt; // 退款為負數，-=負數等於把錢加回餘額
     added++;
