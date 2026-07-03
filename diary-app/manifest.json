@@ -2,7 +2,7 @@
   "name": "日記本",
   "short_name": "日記本",
   "description": "隨手記錄生活與照片的日記本",
-  "start_url": "./diary.html",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#ffffff",
