@@ -127,6 +127,16 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
 .sheet-item:last-child{border-bottom:none;}
 .sheet-item button{background:var(--bg3);border:none;border-radius:8px;padding:7px 14px;font-size:13px;color:var(--text);cursor:pointer;}
 .sheet-item button.danger{color:var(--danger);background:rgba(235,87,87,.1);}
+.sheet-item-col{padding:12px 0;border-bottom:1px solid var(--border);}
+.sheet-item-col:last-child{border-bottom:none;}
+.sheet-item-row{display:flex;justify-content:space-between;align-items:center;font-size:14px;}
+.sheet-item-note{font-size:11px;color:var(--muted);margin-top:4px;}
+.switch{position:relative;display:inline-block;width:44px;height:26px;flex-shrink:0;}
+.switch input{opacity:0;width:0;height:0;}
+.switch-slider{position:absolute;inset:0;background:var(--bg3);border-radius:99px;cursor:pointer;transition:.2s;}
+.switch-slider::before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:.2s;}
+.switch input:checked + .switch-slider{background:var(--accent);}
+.switch input:checked + .switch-slider::before{transform:translateX(18px);}
 
 .toast{position:fixed;bottom:calc(90px + var(--safe-bot));left:16px;right:16px;background:#37352f;color:#fff;padding:11px 16px;border-radius:10px;font-size:13px;z-index:999;opacity:0;transform:translateY(8px);transition:.25s;pointer-events:none;text-align:center;}
 .toast.show{opacity:1;transform:translateY(0);}
@@ -219,6 +229,16 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
     <div class="sheet-item">
       <span>還原備份</span>
       <button onclick="document.getElementById('import-file').click()">上傳</button>
+    </div>
+    <div class="sheet-item-col">
+      <div class="sheet-item-row">
+        <span>隱藏 2024 年（含）以前的日記</span>
+        <label class="switch">
+          <input type="checkbox" id="hide-old-toggle" onchange="toggleHideOld(this)">
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="sheet-item-note" id="hide-old-note"></div>
     </div>
     <div class="sheet-item">
       <span>清除所有日記</span>
@@ -320,9 +340,16 @@ function monthLabel(d){
   return `${dt.getFullYear()}年${dt.getMonth()+1}月`;
 }
 
+const HIDE_OLD_KEY='diary_hide_old_2024';
+const HIDE_OLD_YEAR=2024;
+function isHideOldEnabled(){return localStorage.getItem(HIDE_OLD_KEY)==='1';}
+
 function renderHome(){
   const q=document.getElementById('search-input').value.trim().toLowerCase();
   let list=[...entries];
+  if(isHideOldEnabled()){
+    list=list.filter(e=>parseInt(e.date.slice(0,4),10)>HIDE_OLD_YEAR);
+  }
   if(q){
     list=list.filter(e=>{
       const hay=[e.title,...(e.tags||[]),...(e.blocks||[]).filter(b=>b.type==='text').map(b=>b.value)].join(' ').toLowerCase();
@@ -333,7 +360,10 @@ function renderHome(){
 
   const wrap=document.getElementById('home-list');
   if(list.length===0){
-    wrap.innerHTML=`<div class="empty"><i class="fa-solid fa-book"></i><div>${q?'找不到符合的日記':'還沒有日記，點右下角開始寫第一篇吧'}</div></div>`;
+    let msg='還沒有日記，點右下角開始寫第一篇吧';
+    if(q) msg='找不到符合的日記';
+    else if(entries.length>0) msg=`目前隱藏了 2024 年以前的日記，到「設定」可以再打開`;
+    wrap.innerHTML=`<div class="empty"><i class="fa-solid fa-book"></i><div>${msg}</div></div>`;
     return;
   }
   let html='';
@@ -579,7 +609,19 @@ function closeLightbox(ev){
 }
 
 /* ── settings / backup ── */
-function openSettings(){document.getElementById('sheet-settings').classList.add('open');}
+function openSettings(){
+  document.getElementById('hide-old-toggle').checked=isHideOldEnabled();
+  updateHideOldNote();
+  document.getElementById('sheet-settings').classList.add('open');
+}
+function updateHideOldNote(){
+  const count=entries.filter(e=>parseInt(e.date.slice(0,4),10)<=HIDE_OLD_YEAR).length;
+  document.getElementById('hide-old-note').textContent=count?`目前有 ${count} 篇符合條件`:'目前沒有 2024 年以前的日記';
+}
+function toggleHideOld(input){
+  localStorage.setItem(HIDE_OLD_KEY, input.checked?'1':'0');
+  renderHome();
+}
 function closeSheetOnBg(ev){
   if(ev.target.id==='sheet-settings') document.getElementById('sheet-settings').classList.remove('open');
 }
