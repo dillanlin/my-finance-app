@@ -54,9 +54,8 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
 .entry-cover{width:100%;aspect-ratio:4/3;object-fit:cover;background:linear-gradient(135deg,#fbeee0,#f4dcc6);display:flex;align-items:center;justify-content:center;font-size:36px;}
 .entry-cover img{width:100%;height:100%;object-fit:cover;}
 .entry-body{padding:10px 10px 12px;}
-.entry-title{font-size:14px;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px;}
 .entry-date{font-size:11px;color:var(--muted);margin-bottom:6px;}
-.entry-snippet{font-size:12px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4;}
+.entry-snippet{font-size:13px;color:var(--text);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;}
 .entry-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;}
 .tag-chip{font-size:10px;color:var(--accent);background:rgba(35,131,226,.1);border-radius:5px;padding:2px 6px;}
 
@@ -83,8 +82,6 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
 .mood-row{display:flex;gap:6px;flex-wrap:wrap;}
 .mood-btn{width:38px;height:38px;border-radius:9px;border:1px solid var(--border);background:var(--bg3);font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
 .mood-btn.active{background:rgba(35,131,226,.12);border-color:var(--accent);}
-#title-input{width:100%;border:none;outline:none;font-size:26px;font-weight:700;background:transparent;color:var(--text);margin-bottom:6px;font-family:inherit;}
-#title-input::placeholder{color:#d9d9d6;}
 #tags-input-wrap{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:18px;}
 .tag-editable{font-size:12px;background:var(--bg3);border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:5px;color:var(--text);}
 .tag-editable i{cursor:pointer;color:var(--muted);font-size:10px;}
@@ -105,7 +102,6 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
 /* viewer */
 #viewer-cover{width:100%;max-height:280px;object-fit:cover;border-radius:12px;margin-bottom:16px;display:none;}
 #viewer-mood{font-size:34px;margin-bottom:6px;}
-#viewer-title{font-size:26px;font-weight:700;margin-bottom:6px;line-height:1.3;}
 #viewer-date{font-size:13px;color:var(--muted);margin-bottom:10px;}
 #viewer-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;}
 #viewer-blocks p{font-size:15px;line-height:1.85;white-space:pre-wrap;margin-bottom:14px;}
@@ -177,7 +173,6 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
         <div class="mood-row" id="mood-row"></div>
       </div>
     </div>
-    <input id="title-input" placeholder="標題">
     <div id="tags-input-wrap">
       <input id="tag-input" placeholder="＋ 新增標籤（按 Enter）" onkeydown="handleTagKey(event)">
     </div>
@@ -204,7 +199,6 @@ html,body{height:100%;background:var(--bg2);color:var(--text);font-family:-apple
   <div class="overlay-body">
     <img id="viewer-cover">
     <div id="viewer-mood"></div>
-    <div id="viewer-title"></div>
     <div id="viewer-date"></div>
     <div id="viewer-tags"></div>
     <div id="viewer-blocks"></div>
@@ -352,7 +346,7 @@ function renderHome(){
   }
   if(q){
     list=list.filter(e=>{
-      const hay=[e.title,...(e.tags||[]),...(e.blocks||[]).filter(b=>b.type==='text').map(b=>b.value)].join(' ').toLowerCase();
+      const hay=[...(e.tags||[]),...(e.blocks||[]).filter(b=>b.type==='text').map(b=>b.value)].join(' ').toLowerCase();
       return hay.includes(q);
     });
   }
@@ -383,7 +377,6 @@ function renderHome(){
       <div class="entry-card" onclick="openViewer('${e.id}')">
         <div class="entry-cover">${cover?`<img src="${cover}">`:(e.mood||'📝')}</div>
         <div class="entry-body">
-          <div class="entry-title">${escapeHtml(e.title||'（無標題）')}</div>
           <div class="entry-date">${e.mood||''} ${e.date}</div>
           ${snippet?`<div class="entry-snippet">${escapeHtml(snippet)}</div>`:''}
           ${(e.tags&&e.tags.length)?`<div class="entry-tags">${e.tags.map(t=>`<span class="tag-chip">#${escapeHtml(t)}</span>`).join('')}</div>`:''}
@@ -406,11 +399,10 @@ function openEditor(id){
     draft=JSON.parse(JSON.stringify(e));
     document.getElementById('editor-heading').textContent='編輯日記';
   }else{
-    draft={id:uid(),date:todayStr(),title:'',mood:'😊',tags:[],blocks:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    draft={id:uid(),date:todayStr(),mood:'😊',tags:[],blocks:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
     document.getElementById('editor-heading').textContent='新增日記';
   }
   document.getElementById('entry-date').value=draft.date;
-  document.getElementById('title-input').value=draft.title;
   renderMoodRow();
   renderTags();
   renderBlocksEditor();
@@ -539,7 +531,6 @@ function compressImage(file){
 
 async function saveEntry(){
   draft.date=document.getElementById('entry-date').value||todayStr();
-  draft.title=document.getElementById('title-input').value.trim();
   draft.blocks=draft.blocks.filter(b=>b.type==='image'||b.value.trim());
   draft.updatedAt=new Date().toISOString();
   await dbPut(draft);
@@ -560,7 +551,6 @@ function openViewer(id){
   const coverEl=document.getElementById('viewer-cover');
   if(cover){coverEl.src=cover;coverEl.style.display='block';}else{coverEl.style.display='none';}
   document.getElementById('viewer-mood').textContent=e.mood||'';
-  document.getElementById('viewer-title').textContent=e.title||'（無標題）';
   document.getElementById('viewer-date').textContent=fmtDate(e.date);
   document.getElementById('viewer-tags').innerHTML=(e.tags||[]).map(t=>`<span class="tag-chip">#${escapeHtml(t)}</span>`).join('');
   document.getElementById('viewer-blocks').innerHTML=e.blocks.map(b=>
@@ -593,7 +583,7 @@ function shareEntry(){
   if(!e) return;
   const text=e.blocks.filter(b=>b.type==='text').map(b=>b.value).join('\n\n');
   if(navigator.share){
-    navigator.share({title:e.title||'日記',text:`${e.title}\n${e.date}\n\n${text}`}).catch(()=>{});
+    navigator.share({title:'日記',text:`${e.date}\n\n${text}`}).catch(()=>{});
   }else{
     toast('此裝置不支援分享功能');
   }
