@@ -295,6 +295,66 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </button>
     </div>
 
+    <!-- Analysis -->
+    <div class="page" id="page-analysis">
+      <!-- Symbol selector -->
+      <div class="section-title">選擇股票</div>
+      <div id="analysis-chips" class="chip-row" style="margin-bottom:8px;"></div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <input type="text" class="form-input" id="analysis-input" placeholder="輸入代號查詢，如 2412" style="flex:1;text-transform:uppercase;">
+        <button class="btn btn-primary" style="width:auto;padding:0 16px;" onclick="loadAnalysis(document.getElementById('analysis-input').value)">查詢</button>
+      </div>
+
+      <!-- No token -->
+      <div id="analysis-no-token" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:12px;font-size:13px;color:var(--red,#f87171);line-height:1.6;">
+        ⚠️ 股票分析需要 FinMind Token，請到「設定」頁面設定（免費）。
+      </div>
+      <!-- Loading -->
+      <div id="analysis-loading" style="display:none;text-align:center;padding:40px 0;">
+        <i class="fa-solid fa-magnifying-glass-chart spin" style="font-size:28px;color:var(--blue,#3b82f6);margin-bottom:10px;display:block;"></i>
+        <div style="font-size:14px;color:var(--muted,#94a3b8);">分析 <span id="analysis-loading-sym"></span> 中...</div>
+      </div>
+      <!-- Error -->
+      <div id="analysis-error" style="display:none;padding:14px;background:rgba(248,113,113,.1);border-radius:12px;font-size:13px;color:var(--red,#f87171);white-space:pre-wrap;"></div>
+      <!-- Idle hint -->
+      <div id="analysis-idle" style="text-align:center;padding:40px 20px;color:var(--muted,#94a3b8);">
+        <div style="font-size:36px;margin-bottom:10px;opacity:.4;">🔎</div>
+        <div style="font-size:14px;">選一檔持股或輸入代號，看配息與估值分析</div>
+      </div>
+
+      <!-- Results -->
+      <div id="analysis-results" style="display:none;">
+        <div id="analysis-header" style="margin-bottom:12px;"></div>
+
+        <!-- Valuation -->
+        <div class="section-title">估值（便宜 or 偏貴）</div>
+        <div class="card card-body" style="margin-bottom:12px;">
+          <div id="valuation-stats" style="display:flex;gap:8px;margin-bottom:12px;"></div>
+          <div id="valuation-verdict" style="font-size:13px;line-height:1.6;margin-bottom:10px;"></div>
+          <div class="chart-wrap" style="height:180px;"><canvas id="per-chart"></canvas></div>
+          <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;margin-top:6px;">本益比走勢（線）與近年均值 ± 1 標準差（虛線）</div>
+        </div>
+
+        <!-- Dividend -->
+        <div class="section-title">配息 / 殖利率</div>
+        <div class="card card-body" style="margin-bottom:12px;">
+          <div id="dividend-stats" style="display:flex;gap:8px;margin-bottom:12px;"></div>
+          <div class="chart-wrap" style="height:180px;"><canvas id="div-year-chart"></canvas></div>
+          <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;margin-top:6px;">近年每股現金配息</div>
+          <!-- 存股試算 -->
+          <div style="border-top:1px solid rgba(255,255,255,.08);margin-top:14px;padding-top:12px;">
+            <div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;">🧮 存股年領息試算</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <label style="font-size:13px;color:var(--muted,#94a3b8);white-space:nowrap;">持有股數</label>
+              <input type="number" id="div-calc-shares" oninput="renderDivCalc()" style="flex:1;background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;color:var(--text,#f1f5f9);font-size:15px;text-align:right;">
+            </div>
+            <div id="div-calc-result" style="font-size:13px;line-height:1.7;"></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;padding:4px 0 12px;">資料來源：FinMind · 僅供參考，非投資建議</div>
+      </div>
+    </div>
+
     <!-- Cashflow -->
     <div class="page" id="page-cashflow">
       <!-- Accounts -->
@@ -525,6 +585,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
     <div class="nav-tab" onclick="switchPage('stock',this)">
       <i class="fa-solid fa-arrow-trend-up"></i><span>存股</span>
+    </div>
+    <div class="nav-tab" onclick="switchPage('analysis',this)">
+      <i class="fa-solid fa-magnifying-glass-chart"></i><span>分析</span>
     </div>
     <div class="nav-tab" onclick="switchPage('cashflow',this)">
       <i class="fa-solid fa-wallet"></i><span>記帳</span>
@@ -1033,9 +1096,10 @@ function switchPage(name, tab) {
   document.getElementById('page-'+name).classList.add('active');
   tab.classList.add('active');
   document.getElementById('scroll-area').scrollTop = 0;
-  const titles={dashboard:'💰 財富指揮官', stock:'📈 存股管理', cashflow:'💳 記帳', settings:'⚙️ 設定'};
+  const titles={dashboard:'💰 財富指揮官', stock:'📈 存股管理', analysis:'🔎 股票分析', cashflow:'💳 記帳', settings:'⚙️ 設定'};
   if(name==='settings') setTimeout(() => { loadGeminiKeyToInput(); loadFinmindTokenToInput(); loadProfileToInputs(); }, 50);
   document.getElementById('header-title').textContent = titles[name]||'';
+  if(name==='analysis') initAnalysisPage();
   if(name==='cashflow') renderExpenseChart();
   if(name==='stock') {
     renderStockChart();
@@ -1973,6 +2037,155 @@ function renderStockChart(){
     history.push({date:d.date,val});
   });
   charts.stk=new Chart(ctx,{type:'line',data:{labels:history.map(h=>h.date),datasets:[{data:history.map(h=>h.val),borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.1)',fill:true,tension:.3,pointRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',font:{size:10},maxTicksLimit:5}},y:{ticks:{color:'#94a3b8',font:{size:11},callback:v=>fmtK(v)},grid:{color:'rgba(255,255,255,.05)'}}}}});
+}
+
+// ── 股票分析（配息/殖利率 + 估值，資料來自 FinMind）──────────
+let analysisSym = '';
+let _divPerShareTTM = 0, _divPrice = 0;
+function anaDateNDaysAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().split('T')[0]; }
+function valBox(label,val){ return '<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 8px;text-align:center;"><div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">'+label+'</div><div style="font-size:17px;font-weight:700;">'+val+'</div></div>'; }
+
+function initAnalysisPage(){
+  renderAnalysisChips();
+  if(!analysisSym){
+    const held=[...new Set(db.stock.map(s=>s.symbol))];
+    if(held.length){ loadAnalysis(held[0]); }
+    else { document.getElementById('analysis-idle').style.display='block'; }
+  }
+}
+function renderAnalysisChips(){
+  const el=document.getElementById('analysis-chips');
+  if(!el) return;
+  const held=[...new Set(db.stock.map(s=>s.symbol))];
+  el.innerHTML = held.length ? held.map(s=>{
+    const on=s===analysisSym;
+    return '<div class="chip" onclick="loadAnalysis(\''+s+'\')" style="cursor:pointer;'+(on?'border-color:var(--blue,#3b82f6);background:rgba(59,130,246,.12);':'')+'"><div class="chip-name"'+(on?' style="color:var(--blue,#3b82f6);"':'')+'>'+s+'</div></div>';
+  }).join('') : '<span style="font-size:12px;color:var(--muted,#94a3b8);">尚無持股，用下方輸入代號查詢</span>';
+}
+async function loadAnalysis(sym){
+  sym=(sym||'').toString().trim().toUpperCase();
+  if(!sym) return;
+  analysisSym=sym;
+  renderAnalysisChips();
+  const show=(id,d)=>{const e=document.getElementById(id); if(e) e.style.display=d;};
+  show('analysis-idle','none'); show('analysis-error','none'); show('analysis-results','none'); show('analysis-no-token','none');
+  if(!db.finmindToken){ show('analysis-no-token','block'); return; }
+  show('analysis-loading','block');
+  document.getElementById('analysis-loading-sym').textContent=sym;
+  try{
+    const start=(new Date().getFullYear()-6)+'-01-01';
+    const tk=encodeURIComponent(db.finmindToken), id=encodeURIComponent(sym);
+    const base='https://api.finmindtrade.com/api/v4/data?token='+tk+'&data_id='+id;
+    const [per,div,price]=await Promise.all([
+      fetch(base+'&dataset=TaiwanStockPER&start_date='+start).then(r=>r.json()).catch(()=>({})),
+      fetch(base+'&dataset=TaiwanStockDividend&start_date='+start).then(r=>r.json()).catch(()=>({})),
+      fetch(base+'&dataset=TaiwanStockPrice&start_date='+anaDateNDaysAgo(20)).then(r=>r.json()).catch(()=>({}))
+    ]);
+    const perData=(per&&per.data)||[], divData=(div&&div.data)||[], priceData=(price&&price.data)||[];
+    if(!perData.length && !divData.length){
+      show('analysis-loading','none'); show('analysis-error','block');
+      document.getElementById('analysis-error').textContent='查無 '+sym+' 的資料。\n請確認代號正確（台股上市櫃），或稍後再試。';
+      return;
+    }
+    const curPrice = priceData.length ? (parseFloat(priceData[priceData.length-1].close)||0) : (parseFloat(db.prices[sym])||0);
+    renderAnalysisHeader(sym, curPrice);
+    renderValuation(perData);
+    renderDividendAnalysis(divData, curPrice, sym);
+    show('analysis-loading','none'); show('analysis-results','block');
+    document.getElementById('scroll-area').scrollTop=0;
+  }catch(e){
+    show('analysis-loading','none'); show('analysis-error','block');
+    document.getElementById('analysis-error').textContent='❌ 讀取失敗：'+e.message;
+  }
+}
+function renderAnalysisHeader(sym, price){
+  const held=db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
+  document.getElementById('analysis-header').innerHTML=
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;">'
+    +'<div style="font-size:22px;font-weight:700;color:var(--blue,#3b82f6);">'+sym+'</div>'
+    +'<div style="font-size:16px;font-weight:600;">'+(price?'$'+price.toLocaleString():'—')+'</div></div>'
+    +(held>0?'<div style="font-size:12px;color:var(--muted,#94a3b8);">你持有 '+held.toLocaleString()+' 股</div>':'');
+}
+function renderValuation(perData){
+  if(charts.per){ charts.per.destroy(); charts.per=null; }
+  const all=(perData||[]).filter(d=>d.date).sort((a,b)=>a.date.localeCompare(b.date));
+  const statsEl=document.getElementById('valuation-stats');
+  const vEl=document.getElementById('valuation-verdict');
+  const canvas=document.getElementById('per-chart');
+  if(!all.length){ statsEl.innerHTML=''; vEl.textContent='查無估值資料'; canvas.style.display='none'; return; }
+  canvas.style.display='block';
+  const latest=all[all.length-1];
+  const pe=parseFloat(latest.PER)||0, pb=parseFloat(latest.PBR)||0, yld=parseFloat(latest.dividend_yield)||0;
+  statsEl.innerHTML=valBox('本益比 PE',pe>0?pe.toFixed(1):'—')+valBox('淨值比 PB',pb>0?pb.toFixed(2):'—')+valBox('殖利率',yld>0?yld.toFixed(2)+'%':'—');
+  const peArr=all.map(d=>parseFloat(d.PER)).filter(v=>v>0);
+  const usePE=peArr.length>30;
+  let metricName, series, curVal, cheapWhenLow, dp;
+  if(usePE){ metricName='本益比'; dp=1; series=all.map(d=>({date:d.date,v:parseFloat(d.PER)})).filter(o=>o.v>0); curVal=pe; cheapWhenLow=true; }
+  else { metricName='殖利率'; dp=2; series=all.map(d=>({date:d.date,v:parseFloat(d.dividend_yield)})).filter(o=>o.v>0); curVal=yld; cheapWhenLow=false; }
+  if(series.length<10){ vEl.textContent='資料不足，暫無位階分析'; canvas.style.display='none'; return; }
+  const arr=series.map(o=>o.v);
+  const avg=arr.reduce((a,b)=>a+b,0)/arr.length;
+  const sd=Math.sqrt(arr.reduce((a,b)=>a+(b-avg)*(b-avg),0)/arr.length);
+  const belowOrEq=arr.filter(v=>v<=curVal).length;
+  let cheapPct = cheapWhenLow ? Math.round(belowOrEq/arr.length*100) : Math.round((1-belowOrEq/arr.length)*100);
+  let verdict,color;
+  if(cheapPct<=33){verdict='相對便宜';color='#34d399';} else if(cheapPct<=66){verdict='合理區間';color='#fbbf24';} else {verdict='相對偏貴';color='#f87171';}
+  vEl.innerHTML='目前'+metricName+' <b>'+curVal.toFixed(dp)+(usePE?'':'%')+'</b>，位於近年 <b style="color:'+color+'">'+cheapPct+'%</b> 貴度位階 → <b style="color:'+color+'">'+verdict+'</b>。<br>近年區間 '+Math.min.apply(null,arr).toFixed(dp)+'～'+Math.max.apply(null,arr).toFixed(dp)+'，均值 '+avg.toFixed(dp)+(usePE?'':'%')+(usePE?'':'（ETF 無本益比，改以殖利率判斷，殖利率越高越便宜）');
+  const step=Math.max(1,Math.floor(series.length/120));
+  const pts=series.filter((_,i)=>i%step===0);
+  const labels=pts.map(o=>o.date.slice(2));
+  const line=pts.map(o=>o.v), avgL=pts.map(()=>avg), upL=pts.map(()=>avg+sd), dnL=pts.map(()=>avg-sd);
+  charts.per=new Chart(canvas,{type:'line',data:{labels,datasets:[
+    {data:line,borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.1)',fill:true,tension:.2,pointRadius:0,borderWidth:2},
+    {data:avgL,borderColor:'#94a3b8',borderDash:[5,4],pointRadius:0,borderWidth:1,fill:false},
+    {data:upL,borderColor:'rgba(248,113,113,.6)',borderDash:[3,3],pointRadius:0,borderWidth:1,fill:false},
+    {data:dnL,borderColor:'rgba(52,211,153,.6)',borderDash:[3,3],pointRadius:0,borderWidth:1,fill:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',font:{size:9},maxTicksLimit:6}},y:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'rgba(255,255,255,.05)'}}}}});
+}
+function renderDividendAnalysis(divData, price, sym){
+  if(charts.div){ charts.div.destroy(); charts.div=null; }
+  _divPrice=price||0;
+  const statsEl=document.getElementById('dividend-stats');
+  const byYear={};
+  (divData||[]).forEach(d=>{
+    const cash=(parseFloat(d.CashEarningsDistribution)||0)+(parseFloat(d.CashStatutorySurplus)||0);
+    if(cash<=0) return;
+    const ex=String(d.CashExDividendTradingDate||d.date||'');
+    const ym=ex.match(/^\d{4}/); const yr=ym?ym[0]:String(d.year||'');
+    if(!/^\d{4}$/.test(yr)) return;
+    byYear[yr]=(byYear[yr]||0)+cash;
+  });
+  const years=Object.keys(byYear).sort();
+  let streak=0;
+  if(years.length){ let y=parseInt(years[years.length-1]); while(byYear[String(y)]>0){ streak++; y--; } }
+  const now=new Date(); let ttm=0;
+  (divData||[]).forEach(d=>{
+    const cash=(parseFloat(d.CashEarningsDistribution)||0)+(parseFloat(d.CashStatutorySurplus)||0);
+    const ex=new Date(d.CashExDividendTradingDate||d.date);
+    if(cash>0 && !isNaN(ex.getTime()) && (now-ex)/864e5<=400) ttm+=cash;
+  });
+  if(ttm<=0 && years.length) ttm=byYear[years[years.length-1]];
+  _divPerShareTTM=ttm;
+  const yieldNow=price>0?ttm/price*100:0;
+  statsEl.innerHTML=valBox('近一年配息','$'+ttm.toFixed(2))+valBox('現金殖利率',yieldNow?yieldNow.toFixed(2)+'%':'—')+valBox('連續配息',streak+' 年');
+  const ctx=document.getElementById('div-year-chart');
+  if(!years.length){ ctx.style.display='none'; document.getElementById('div-calc-result').textContent='此標的近年查無現金配息紀錄'; return; }
+  ctx.style.display='block';
+  charts.div=new Chart(ctx,{type:'bar',data:{labels:years,datasets:[{data:years.map(y=>byYear[y]),backgroundColor:'rgba(52,211,153,.6)',borderColor:'#10b981',borderWidth:1,borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'$'+c.parsed.y.toFixed(2)+'/股'}}},scales:{x:{ticks:{color:'#94a3b8',font:{size:10}},grid:{display:false}},y:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'rgba(255,255,255,.05)'}}}}});
+  const held=db.stock.filter(s=>s.symbol===sym).reduce((a,s)=>a+s.shares,0);
+  document.getElementById('div-calc-shares').value = held>0?held:1000;
+  renderDivCalc();
+}
+function renderDivCalc(){
+  const el=document.getElementById('div-calc-result'); if(!el) return;
+  const shares=parseFloat(document.getElementById('div-calc-shares').value)||0;
+  const annual=_divPerShareTTM*shares;
+  const cost=_divPrice*shares;
+  const yieldNow=_divPrice>0?_divPerShareTTM/_divPrice*100:0;
+  el.innerHTML='以近一年配息 <b>$'+_divPerShareTTM.toFixed(2)+'</b>/股計算：<br>'
+    +'預估年領息 <b style="color:#34d399;">$'+Math.round(annual).toLocaleString()+'</b>'
+    +(annual>0?'（約每月 $'+Math.round(annual/12).toLocaleString()+'）':'')
+    +(cost>0?'<br>投入成本約 $'+Math.round(cost).toLocaleString()+'，年化殖利率 '+yieldNow.toFixed(2)+'%':'');
 }
 
 // ── CSV import ────────────────────────────────────────────
