@@ -367,6 +367,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="seg-btn active" onclick="setCfSeg(0,this)">每月支出</div>
           <div class="seg-btn" onclick="setCfSeg(1,this)">類別分析</div>
         </div>
+        <div id="cf-month-ctrl" style="display:flex;justify-content:flex-end;margin:8px 0 -4px;">
+          <select id="cf-months" onchange="setCfMonths(this.value)" style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:4px 8px;color:var(--muted,#94a3b8);font-size:12px;">
+            <option value="3">近 3 月</option>
+            <option value="6" selected>近 6 月</option>
+            <option value="12">近 12 月</option>
+            <option value="0">全部</option>
+          </select>
+        </div>
         <div class="chart-wrap"><canvas id="expense-chart"></canvas></div>
       </div>
 
@@ -1999,12 +2007,16 @@ function colorToRgb(c){
 }
 
 let cfSegIdx=0;
+let cfMonthLimit=6;
 function setCfSeg(idx,el){
   cfSegIdx=idx;
   document.querySelectorAll('#cf-seg .seg-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
+  const ctrl=document.getElementById('cf-month-ctrl');
+  if(ctrl) ctrl.style.display = idx===0 ? 'flex' : 'none';
   renderExpenseChart();
 }
+function setCfMonths(v){ cfMonthLimit=parseInt(v)||0; renderExpenseChart(); }
 
 function renderExpenseChart(){
   const ctx=document.getElementById('expense-chart');
@@ -2015,7 +2027,8 @@ function renderExpenseChart(){
   if(cfSegIdx===0){
     let map={};
     exps.forEach(e=>{const m=e.date.slice(0,7);map[m]=(map[m]||0)+e.amount;});
-    const labels=Object.keys(map).sort();
+    let labels=Object.keys(map).sort();
+    if(cfMonthLimit>0) labels=labels.slice(-cfMonthLimit);  // 只顯示最近 N 個月
     charts.exp=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data:labels.map(l=>map[l]),backgroundColor:'rgba(248,113,113,.6)',borderRadius:6,borderColor:'#f87171',borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,onClick:(evt,els)=>{ if(els&&els.length){ allExpMonth=labels[els[0].index]; openSheet('all-exp'); } },plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#94a3b8',font:{size:11}}},y:{ticks:{color:'#94a3b8',font:{size:11},callback:v=>fmtK(v)},grid:{color:'rgba(255,255,255,.05)'}}}}});
   } else {
     let catMap={};
@@ -2825,20 +2838,21 @@ async function runAiReport() {
   }
 
   try {
+    // 依序嘗試存在的模型（優先 2.0-flash，額度最高）
     const primaryModel = db.geminiModel || 'gemini-2.0-flash';
-    let text;
-    try {
-      text = await tryGemini(primaryModel, 2); // try 3 times total
-    } catch(e1) {
-      // Fallback: try gemini-1.5-flash if primary keeps failing
-      const el = document.getElementById('ai-loading-text');
-      if(el) el.textContent = '主要模型不可用，切換備用模型...';
-      try {
-        text = await tryGemini('gemini-1.5-flash', 1);
-      } catch(e2) {
-        throw e1; // Throw the original error
+    const chain = [...new Set(['gemini-2.0-flash', primaryModel, 'gemini-2.5-flash', 'gemini-2.0-flash-lite'])];
+    let text, lastE;
+    for(const mdl of chain){
+      try { text = await tryGemini(mdl, 1); break; }
+      catch(eM){
+        lastE = eM;
+        const em = (eM.message||'').toLowerCase();
+        if(em.includes('not found') || em.includes('not supported')) continue; // 模型不存在 → 換下一個
+        const el = document.getElementById('ai-loading-text');
+        if(el) el.textContent = '模型忙線/額度，切換備用模型...';
       }
     }
+    if(text === undefined) throw lastE || new Error('所有模型皆無法使用');
 
     clearInterval(loadingTimer);
     document.getElementById('ai-report-loading').style.display = 'none';
@@ -3569,29 +3583,37 @@ function parseRetryDelay(msg){
   const m = (msg||'').match(/retry in ([\d.]+)\s*s/i);
   return m ? Math.min(Math.ceil(parseFloat(m[1])), 60)*1000 : 0;
 }
-// 帶重試 + 退避 + 模型降級的 OCR 呼叫（優先 2.0-flash，額度最高）
+// 模型不存在/不支援 → 應跳過改用下一個模型（非重試）
+function isModelUnavailable(msg){
+  msg = (msg||'').toLowerCase();
+  return msg.includes('not found') || msg.includes('not supported') || msg.includes('does not exist') || msg.includes('is not supported for');
+}
+// 帶重試 + 退避 + 模型降級的 OCR 呼叫（優先 2.0-flash，額度最高；只在存在的模型間降級）
 async function geminiOcrTry(base64, mediaType, prompt, useJson, onWait){
-  const models = [...new Set(['gemini-2.0-flash', db.geminiModel, 'gemini-1.5-flash'].filter(Boolean))];
+  const models = [...new Set(['gemini-2.0-flash', db.geminiModel, 'gemini-2.5-flash', 'gemini-2.0-flash-lite'].filter(Boolean))];
   const delays = [3000, 8000, 15000];
-  let lastErr;
+  let lastErr, quotaHit = false;
   for(const model of models){
     for(let attempt=0; attempt<3; attempt++){
       try {
         return await geminiOcrFetch(base64, mediaType, prompt, useJson, model);
       } catch(e){
         lastErr = e;
-        if(!isTransientErr(e.message)) throw e;  // 非暫時性錯誤（如金鑰錯）直接丟出
+        const msg = e.message || '';
+        if(isModelUnavailable(msg)) break;               // 此模型不存在 → 直接換下一個
+        if(!isTransientErr(msg)) throw e;                 // 非暫時性錯誤（金鑰錯等）直接丟出
+        if(/quota|429|exhausted/i.test(msg)) quotaHit = true;
         if(attempt < 2){
-          const wait = parseRetryDelay(e.message) || delays[attempt];
+          const wait = parseRetryDelay(msg) || delays[attempt];
           if(onWait) onWait(model, Math.round(wait/1000), attempt);
           await new Promise(r=>setTimeout(r, wait));
         }
-        // attempt 用完 → 跳出換下一個模型（不同模型有獨立額度）
       }
     }
-    if(onWait) onWait(model, 0, -1);  // 提示換模型
+    if(onWait) onWait(model, 0, -1);  // 換下一個模型
   }
-  throw lastErr || new Error('OCR 服務暫時無法使用');
+  if(quotaHit) throw new Error('今日免費額度可能已用盡（各模型皆被限流）。建議明天再試，或減少一次上傳的張數。');
+  throw lastErr || new Error('OCR 服務暫時無法使用，請稍後再試');
 }
 
 // 從可能含 markdown / 多餘文字的回應中擷取 JSON 陣列
