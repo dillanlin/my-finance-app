@@ -2519,8 +2519,13 @@ async function testGeminiKey() {
       .map(m => m.name.replace('models/',''));
     resultEl.style.color = '#10b981';
     resultEl.innerHTML = '✅ Key 有效！可用模型：<br>' + models.join('<br>');
-    // Auto-use first vision-capable model
-    const visionModel = models.find(m => m.includes('flash') || m.includes('pro'));
+    // 自動選用視覺模型：優先 gemini-2.0-flash（免費額度最高、最穩），其次其他 flash，最後 pro
+    const visionModel =
+      models.find(m => m === 'gemini-2.0-flash') ||
+      models.find(m => m.includes('2.0-flash')) ||
+      models.find(m => m.includes('1.5-flash')) ||
+      models.find(m => m.includes('flash')) ||
+      models.find(m => m.includes('pro'));
     if(visionModel) {
       db.geminiModel = visionModel;
       saveData();
@@ -3417,23 +3422,11 @@ async function handleCcUpload(input) {
       const items = await callGeminiCcOcr(base64, file.type, cardName, file.name, ccMonth);
       allItems = allItems.concat(items);
     } catch(err) {
+      // geminiOcrTry 內部已重試/退避/換模型，這裡是最終失敗
       errorCount++;
       console.warn('Screenshot', i+1, 'failed:', err.message);
       lastError = err.message;
       ccDebugLog.push({ file: file.name, stage: '錯誤', count: 0, finishReason: '', raw: '❌ '+err.message });
-      // If it\'s a rate limit error, wait and retry once
-      if(err.message && (err.message.includes('429') || err.message.includes('quota') || err.message.includes('rate'))) {
-        document.getElementById('cc-loading-text').textContent = `額度暫達上限，等待 60 秒後重試第 ${i+1} 張...`;
-        await new Promise(r => setTimeout(r, 60000));
-        try {
-          const base64 = await fileToBase64(file);
-          const items = await callGeminiCcOcr(base64, file.type, cardName, file.name, ccMonth);
-          allItems = allItems.concat(items);
-          errorCount--; // Recovered
-        } catch(retryErr) {
-          console.warn('Retry also failed:', retryErr.message);
-        }
-      }
     }
   }
 
@@ -3464,27 +3457,31 @@ async function handleCcUpload(input) {
   const existing = db.expenses
     .filter(e => e.amount)
     .map(e => ({ date: e.date, amt: Math.abs(e.amount), m: ccMerchantNorm(e.note) }));
+  const existingInc = (db.incomes||[]).map(i => ({ date: i.date, amt: Math.abs(i.amount) }));
 
   allItems.forEach(it => {
     if(!it.amount || !it.date) return;
     const amt = Math.abs(parseFloat(it.amount));
+    it.kind = (it.kind === 'income') ? 'income' : 'expense';
     const m = ccMerchantNorm(it.merchant);
 
     // 批內完全重複
-    const exactKey = it.date+'|'+m+'|'+amt;
+    const exactKey = it.kind+'|'+it.date+'|'+m+'|'+amt;
     if(seen.has(exactKey)) { dupCount++; return; }
     seen.set(exactKey, true);
 
-    // 與既有資料比對（日期±1天，商家相符或一方無商家）
+    // 與既有資料比對（日期±1天）
     const dateObj = new Date(it.date);
     let isPossibleDup = false;
     for(let offset = -1; offset <= 1 && !isPossibleDup; offset++) {
       const cd = new Date(dateObj);
       cd.setDate(cd.getDate() + offset);
       const ds = cd.toISOString().split('T')[0];
-      if(existing.some(e => e.amt === amt && e.date === ds &&
-          (!e.m || !m || e.m === m || e.m.includes(m) || m.includes(e.m)))) {
-        isPossibleDup = true;
+      if(it.kind === 'income') {
+        if(existingInc.some(e => e.amt === amt && e.date === ds)) isPossibleDup = true;
+      } else {
+        if(existing.some(e => e.amt === amt && e.date === ds &&
+            (!e.m || !m || e.m === m || e.m.includes(m) || m.includes(e.m)))) isPossibleDup = true;
       }
     }
     if(isPossibleDup) { it._possibleDup = true; possibleDupCount++; }
@@ -3538,8 +3535,8 @@ function ccMerchantNorm(s){
 let ccDebugLog = [];
 
 // 共用：呼叫 Gemini Vision。useJson=true 用 JSON 模式，false 用純文字（後援）
-async function geminiOcrFetch(base64, mediaType, prompt, useJson){
-  const model = db.geminiModel || 'gemini-2.0-flash';
+async function geminiOcrFetch(base64, mediaType, prompt, useJson, model){
+  model = model || db.geminiModel || 'gemini-2.0-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${db.geminiKey}`;
   const genCfg = { temperature: 0, maxOutputTokens: 4000 };
   if(useJson) genCfg.responseMimeType = 'application/json';
@@ -3562,6 +3559,41 @@ async function geminiOcrFetch(base64, mediaType, prompt, useJson){
   return { text, finishReason };
 }
 
+// 判斷是否為「暫時性」錯誤（忙線/額度/限流），可退避重試或換模型
+function isTransientErr(msg){
+  msg = (msg||'').toLowerCase();
+  return ['overload','high demand','unavailable','503','quota','rate','429','exhausted','try again','resource has been exhausted'].some(k=>msg.includes(k));
+}
+// 從錯誤訊息解析建議等待秒數（"Please retry in 42.7s"）
+function parseRetryDelay(msg){
+  const m = (msg||'').match(/retry in ([\d.]+)\s*s/i);
+  return m ? Math.min(Math.ceil(parseFloat(m[1])), 60)*1000 : 0;
+}
+// 帶重試 + 退避 + 模型降級的 OCR 呼叫（優先 2.0-flash，額度最高）
+async function geminiOcrTry(base64, mediaType, prompt, useJson, onWait){
+  const models = [...new Set(['gemini-2.0-flash', db.geminiModel, 'gemini-1.5-flash'].filter(Boolean))];
+  const delays = [3000, 8000, 15000];
+  let lastErr;
+  for(const model of models){
+    for(let attempt=0; attempt<3; attempt++){
+      try {
+        return await geminiOcrFetch(base64, mediaType, prompt, useJson, model);
+      } catch(e){
+        lastErr = e;
+        if(!isTransientErr(e.message)) throw e;  // 非暫時性錯誤（如金鑰錯）直接丟出
+        if(attempt < 2){
+          const wait = parseRetryDelay(e.message) || delays[attempt];
+          if(onWait) onWait(model, Math.round(wait/1000), attempt);
+          await new Promise(r=>setTimeout(r, wait));
+        }
+        // attempt 用完 → 跳出換下一個模型（不同模型有獨立額度）
+      }
+    }
+    if(onWait) onWait(model, 0, -1);  // 提示換模型
+  }
+  throw lastErr || new Error('OCR 服務暫時無法使用');
+}
+
 // 從可能含 markdown / 多餘文字的回應中擷取 JSON 陣列
 function parseOcrArray(text){
   if(!text) return null;
@@ -3574,17 +3606,14 @@ function parseOcrArray(text){
 
 async function callGeminiCcOcr(base64, mediaType, cardName, fileName, ym) {
   const ymHint = ym ? ('\n\n【本批截圖所屬年月】'+ym.split('-')[0]+'年'+parseInt(ym.split('-')[1])+'月：畫面只有「DD日」或看不到月份時，一律用這個年月組成日期（除非該筆明顯屬於相鄰月份）。') : '';
-  const prompt = `這是一張台灣台新銀行 App 的消費紀錄截圖（也可能是其他銀行帳單、Line Pay 紀錄或通知）。請把畫面上每一筆「實際消費」抓出來，不要假設固定版面。`+ymHint+`
+  const prompt = `這是一張台灣台新銀行 App 的交易紀錄截圖（也可能是其他銀行帳單、Line Pay 紀錄或通知）。請把畫面上每一筆「消費」與「收入」都抓出來，不要假設固定版面。`+ymHint+`
 
-【主要版面：台新 App「交易明細／全部」】每筆一列：
-- 左側：「DD日」（只有日，沒有月）＋類型小圖示（錢袋=帳戶/轉帳、卡片=刷卡）
-- 中間：商家名稱，下方有分類小圖示（🍴餐飲、🚗交通、🏠居家/購物）
-- 右側：金額，負號開頭是支出（-$120）；無負號/正數是入帳（例 ATM 存款 $30,000）
+【版面】台新「交易明細／全部」每筆一列：左＝「DD日」（只有日）＋類型小圖示（錢袋=帳戶/轉帳、卡片=刷卡）；中＝名稱(下方有分類小圖示 🍴🚗🏠)；右＝金額（負號=支出 -$120；正數=入帳 例 $94,972）。
 
-【務必跳過，不要輸出（這些不是消費）】
-- 信用卡費／台新卡費／還款（例「台新卡費林子軒 -$38,815」）→ 繳卡費，會與個別刷卡重複
-- ATM 存提款、轉帳、跨行（例「ATM013-... $30,000」）
-- 任何正數金額（入帳／存款／退款收入）
+【每筆先判斷 kind】
+- kind="expense"（支出）：負號金額的消費（刷卡、Line Pay）。
+- kind="income"（收入）：正數且是「真正收入」——薪資轉帳（名稱像公司/代發薪，如 APPLIEDMATERIALS、花旗代發、台積電）、獎金、利息、股利、退費入帳；income 要填 source（薪水/獎金/利息/股利/其他）。
+- 跳過不要輸出：ATM 存提款/自我轉帳/跨行（如「ATM013-...」）、信用卡費/台新卡費/還款（會與個別刷卡重複）、以及任何無法判斷用途的正數。
 
 【判讀規則】
 1. 日期：只有「DD日」時，用畫面上的月份標題補月份；都看不到就用「今年的這個月」，若那天比今天晚則算上個月。輸出 YYYY-MM-DD。
@@ -3596,27 +3625,34 @@ async function callGeminiCcOcr(base64, mediaType, cardName, fileName, ym) {
 【次要版面：台新「刷卡消費」卡片】左上「MM/DD 末4碼0503」、左下商家、右側「NT$金額」（上方可能有「可分期」標籤）；規則同上。
 
 【範例】
-「02日 連支*大王茶迷 高雄熱 -$75 🍴」→ {"date":"2026-06-02","merchant":"大王茶迷","amount":75,"category":"餐費","paymentMethod":"Line Pay"}
-「02日 連加*小北百貨_九如二 -$1,439 🏠」→ {"date":"2026-06-02","merchant":"小北百貨","amount":1439,"category":"購物","paymentMethod":"Line Pay"}
-「01日 連加*中油條碼_開元站 -$114 🚗」→ {"date":"2026-06-01","merchant":"中油","amount":114,"category":"交通","paymentMethod":"Line Pay"}
-「02日 代繳遠傳帳單09**** -$2,027」→ {"date":"2026-06-02","merchant":"遠傳電信","amount":2027,"category":"訂閱","paymentMethod":"信用卡"}
+「02日 連支*大王茶迷 -$75 🍴」→ {"kind":"expense","date":"2026-06-02","merchant":"大王茶迷","amount":75,"category":"餐費","paymentMethod":"Line Pay"}
+「02日 連加*小北百貨_九如二 -$1,439 🏠」→ {"kind":"expense","date":"2026-06-02","merchant":"小北百貨","amount":1439,"category":"購物","paymentMethod":"Line Pay"}
+「02日 代繳遠傳帳單09**** -$2,027」→ {"kind":"expense","date":"2026-06-02","merchant":"遠傳電信","amount":2027,"category":"訂閱","paymentMethod":"信用卡"}
+「18日 APPLIEDMATERIALS花旗代發 $94,972」→ {"kind":"income","date":"2026-06-18","merchant":"AMAT 薪資","amount":94972,"source":"薪水"}
 「02日 台新卡費林子軒 -$38,815」→ 跳過不輸出
 「08日 ATM013-... $30,000」→ 跳過不輸出
 
 【回傳格式】只回純 JSON 陣列，不要 markdown、不要任何說明：
-[{"date":"YYYY-MM-DD","merchant":"商家","amount":數字,"category":"類別","paymentMethod":"Line Pay 或 信用卡"}]
-真的完全沒有可辨識的消費才回 []`;
+[{"kind":"expense 或 income","date":"YYYY-MM-DD","merchant":"名稱","amount":數字,"category":"支出類別","source":"收入來源","paymentMethod":"Line Pay 或 信用卡"}]
+真的沒有可辨識項目才回 []`;
 
-  // 第一次：JSON 模式
+  const onWait = (model, secs, phase) => {
+    const el = document.getElementById('cc-loading-text');
+    if(!el) return;
+    if(phase === -1) el.textContent = '切換備用模型重試...';
+    else el.textContent = 'AI 忙線/額度限制，'+secs+' 秒後重試（'+String(model).replace('gemini-','')+'）...';
+  };
+
+  // 第一次：JSON 模式（帶重試/退避/模型降級）
   let res, items = null;
-  res = await geminiOcrFetch(base64, mediaType, prompt, true);
+  res = await geminiOcrTry(base64, mediaType, prompt, true, onWait);
   items = parseOcrArray(res.text);
 
   // 後援：JSON 模式回空陣列或解析失敗 → 改用純文字模式重試一次
   let usedFallback = false;
   if(!items || items.length === 0){
     try {
-      const res2 = await geminiOcrFetch(base64, mediaType, prompt, false);
+      const res2 = await geminiOcrTry(base64, mediaType, prompt, false, onWait);
       const items2 = parseOcrArray(res2.text);
       if(items2 && items2.length){ res = res2; items = items2; usedFallback = true; }
       else if(items === null && items2 !== null){ res = res2; items = items2; usedFallback = true; }
@@ -3649,26 +3685,28 @@ function renderCcResults() {
   // Sort by date desc
   ccParsedItems.sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-  const total = ccParsedItems.reduce((s,it) => s + (parseFloat(it.amount)||0), 0);
-  summary.textContent = `共 ${ccParsedItems.length} 筆 · $${Math.round(total).toLocaleString()}`;
-
-  // Show summary with possible duplicate warning
+  const expItems = ccParsedItems.filter(it => it.kind !== 'income');
+  const incItems = ccParsedItems.filter(it => it.kind === 'income');
+  const expTot = expItems.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
+  const incTot = incItems.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
   const possibleDups = ccParsedItems.filter(it => it._possibleDup).length;
-  if(possibleDups > 0) {
-    summary.innerHTML = '共 '+ccParsedItems.length+' 筆 · <span style="color:#fbbf24;">⚠️ '+possibleDups+' 筆疑似重複</span>';
-  }
+  summary.innerHTML = '支出 '+expItems.length+' 筆 $'+Math.round(expTot).toLocaleString()
+    + (incItems.length ? ' · <span style="color:#34d399;">收入 '+incItems.length+' 筆 $'+Math.round(incTot).toLocaleString()+'</span>' : '')
+    + (possibleDups>0 ? ' · <span style="color:#fbbf24;">⚠️ '+possibleDups+' 疑似重複</span>' : '');
 
   list.innerHTML = ccParsedItems.map((it, i) => {
-    const emoji = CAT_EMOJIS[it.category] || '🏷️';
-    const catOpts = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他']
-      .map(c => `<option value="${c}"${c===it.category?' selected':''}>${CAT_EMOJIS[c]||'🏷️'} ${c}</option>`).join('');
+    const isInc = it.kind === 'income';
     const dupWarning = it._possibleDup
       ? '<div style="background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#fbbf24;">⚠️ 疑似重複（已有同日同金額紀錄），請確認是否需要匯入</div>'
       : '';
-    return dupWarning + `<div style="background:var(--card,#1e293b);border:1px solid ${it._possibleDup?'rgba(251,191,36,.3)':'rgba(255,255,255,.08)'};border-radius:12px;padding:12px;margin-bottom:8px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
+    const borderCol = it._possibleDup ? 'rgba(251,191,36,.3)' : (isInc ? 'rgba(52,211,153,.35)' : 'rgba(255,255,255,.08)');
+    const toggle = `<div style="display:flex;gap:4px;margin-bottom:8px;">
+      <button onclick="ccSetKind(${i},'expense')" style="flex:1;padding:5px;border-radius:8px;border:1px solid ${!isInc?'var(--red,#f87171)':'rgba(255,255,255,.08)'};background:${!isInc?'rgba(248,113,113,.15)':'transparent'};color:${!isInc?'var(--red,#f87171)':'var(--muted,#94a3b8)'};font-size:12px;cursor:pointer;">支出</button>
+      <button onclick="ccSetKind(${i},'income')" style="flex:1;padding:5px;border-radius:8px;border:1px solid ${isInc?'var(--green,#10b981)':'rgba(255,255,255,.08)'};background:${isInc?'rgba(16,185,129,.15)':'transparent'};color:${isInc?'var(--green,#10b981)':'var(--muted,#94a3b8)'};font-size:12px;cursor:pointer;">收入</button>
+    </div>`;
+    const header = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
         <div style="flex:1;min-width:0;">
-          <input type="text" value="${it.merchant||''}" placeholder="店家"
+          <input type="text" value="${(it.merchant||'').replace(/"/g,'&quot;')}" placeholder="名稱"
             style="width:100%;background:transparent;border:none;color:var(--text,#f1f5f9);font-size:14px;font-weight:500;padding:0;outline:none;"
             onchange="ccParsedItems[${i}].merchant=this.value">
           <input type="date" value="${it.date||''}"
@@ -3676,8 +3714,21 @@ function renderCcResults() {
             onchange="ccParsedItems[${i}].date=this.value">
         </div>
         <button onclick="ccParsedItems.splice(${i},1);renderCcResults();" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 100px;gap:8px;">
+      </div>`;
+    let body;
+    if(isInc){
+      body = `<div style="display:grid;grid-template-columns:1fr 100px;gap:8px;">
+        <input type="text" value="${(it.source||it.merchant||'').replace(/"/g,'&quot;')}" placeholder="收入來源（薪水…）"
+          style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;"
+          onchange="ccParsedItems[${i}].source=this.value">
+        <input type="number" value="${it.amount||0}" step="1"
+          style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--green,#10b981);font-size:14px;font-weight:600;text-align:right;"
+          onchange="ccParsedItems[${i}].amount=parseFloat(this.value)||0">
+      </div>`;
+    } else {
+      const catOpts = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他']
+        .map(c => `<option value="${c}"${c===it.category?' selected':''}>${CAT_EMOJIS[c]||'🏷️'} ${c}</option>`).join('');
+      body = `<div style="display:grid;grid-template-columns:1fr 100px;gap:8px;">
         <select onchange="ccParsedItems[${i}].category=this.value"
           style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;">
           ${catOpts}
@@ -3688,9 +3739,18 @@ function renderCcResults() {
       </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#94a3b8);margin-top:8px;cursor:pointer;">
         <input type="checkbox" ${it.reimb?'checked':''} onchange="ccParsedItems[${i}].reimb=this.checked" style="width:16px;height:16px;">🧾 可報帳（不計入支出）
-      </label>
+      </label>`;
+    }
+    return dupWarning + `<div style="background:var(--card,#1e293b);border:1px solid ${borderCol};border-radius:12px;padding:12px;margin-bottom:8px;">
+      ${toggle}${header}${body}
     </div>`;
   }).join('');
+}
+function ccSetKind(i, kind){
+  if(!ccParsedItems[i]) return;
+  ccParsedItems[i].kind = kind;
+  if(kind === 'income') delete ccParsedItems[i].reimb;
+  renderCcResults();
 }
 
 function renderCcDebug() {
@@ -3722,36 +3782,48 @@ function importCcData() {
   }
   const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
 
-  let added = 0, totalAmt = 0;
-  // 跳過完全重複：同日 + 同金額 + 同商家（地點）
+  if(!db.incomes) db.incomes=[];
+  let added = 0, incAdded = 0, totalAmt = 0, totalInc = 0;
+  // 跳過完全重複
   const ccKey = (date, amt, merchant) => date+'|'+Math.abs(amt)+'|'+ccMerchantNorm(merchant);
   const keys = new Set(db.expenses.map(e => ccKey(e.date, e.amount, e.note)));
+  const incKeys = new Set(db.incomes.map(i => i.date+'|'+Math.abs(i.amount)));
 
   ccParsedItems.forEach(it => {
     const amt = parseFloat(it.amount) || 0;
     if(amt === 0 || !it.date) return;
-    const key = ccKey(it.date, amt, it.merchant);
-    if(keys.has(key)) return;
-    const rec = {
-      id: Date.now() + Math.random(),
-      date: it.date,
-      amount: amt,
-      category: it.category || '其他',
-      paymentMethod: it.paymentMethod || cardName,
-      note: it.merchant || ''
-    };
-    if(it.reimb) rec.reimb = true;
-    db.expenses.push(rec);
-    keys.add(key);
-    account.balance -= amt; // 退款為負數，-=負數等於把錢加回餘額
-    added++;
-    totalAmt += amt;
+    if(it.kind === 'income'){
+      const k = it.date+'|'+Math.abs(amt);
+      if(incKeys.has(k)) return;
+      db.incomes.push({ id: Date.now()+Math.random(), date: it.date, amount: amt, source: it.source || it.merchant || '收入', targetId: accId });
+      incKeys.add(k);
+      account.balance += amt;
+      incAdded++; totalInc += amt;
+    } else {
+      const key = ccKey(it.date, amt, it.merchant);
+      if(keys.has(key)) return;
+      const rec = {
+        id: Date.now() + Math.random(),
+        date: it.date,
+        amount: amt,
+        category: it.category || '其他',
+        paymentMethod: it.paymentMethod || cardName,
+        note: it.merchant || ''
+      };
+      if(it.reimb) rec.reimb = true;
+      db.expenses.push(rec);
+      keys.add(key);
+      account.balance -= amt; // 退款為負數，-=負數等於把錢加回餘額
+      added++; totalAmt += amt;
+    }
   });
 
   saveData();
   updateUI();
   closeSheet('cc-ocr');
-  toast(`✅ 已匯入 ${added} 筆 (${cardName})，共 $${Math.round(totalAmt).toLocaleString()}`);
+  let msg = '✅ 匯入支出 '+added+' 筆 $'+Math.round(totalAmt).toLocaleString();
+  if(incAdded>0) msg += '、收入 '+incAdded+' 筆 $'+Math.round(totalInc).toLocaleString();
+  toast(msg);
 }
 
 // ── OCR: Screenshot AI import ─────────────────────────────
@@ -3804,35 +3876,26 @@ async function callClaudeOCR(base64, mediaType) {
 ]
 注意：代號只取數字部分（如0050、006208、2330），shares、avgPrice、currentPrice 都要是純數字，不要有逗號。`;
 
-  const model = db.geminiModel || 'gemini-2.0-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const onWait = (model, secs, phase) => {
+    const el = document.querySelector('#ocr-status div:nth-child(2)');
+    if(!el) return;
+    el.textContent = phase === -1 ? '切換備用模型重試...' : ('AI 忙線/額度，'+secs+' 秒後重試...');
+  };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { inline_data: { mime_type: mediaType, data: base64 } },
-          { text: prompt }
-        ]
-      }],
-      generationConfig: { temperature: 0.1 }
-    })
-  });
-
-  if(!response.ok) {
-    const err = await response.json().catch(()=>({}));
-    const msg = err.error?.message || `HTTP ${response.status}`;
-    if(msg.includes('API_KEY_INVALID') || msg.includes('400')) throw new Error('API Key 無效，請重新確認');
-    throw new Error(msg);
+  let res;
+  try {
+    res = await geminiOcrTry(base64, mediaType, prompt, false, onWait);
+  } catch(err){
+    const msg = err.message || '';
+    if(msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) throw new Error('API Key 無效，請重新確認');
+    throw err;
   }
-
-  const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  if(!text) throw new Error('Gemini 未回傳結果');
-  const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  const items = parseOcrArray(res.text);
+  if(items === null){
+    if(!res.text) throw new Error('Gemini 未回傳結果（可能忙線，請稍後再試）');
+    throw new Error('AI 回傳格式錯誤，請重試');
+  }
+  return items;
 }
 
 function renderOcrResults(stocks) {
