@@ -4003,28 +4003,28 @@ function importOcrData() {
   // Find delivery account
   const deliveryAcc = db.assets.find(a=>a.isDelivery) || db.assets[0];
 
-  let added=0;
+  let added=0, updated=0;
   ocrParsed.forEach(s => {
     if(!s.symbol||!s.shares||!s.avgPrice) return;
-    // Check if already exists — update price only if so
     const existing = db.stock.filter(x=>x.symbol===s.symbol);
-    if(existing.length===0) {
-      // Add as new entry
-      db.stock.push({
-        id: Date.now()+Math.random(),
-        date: todayStr,
-        symbol: s.symbol,
-        price: s.avgPrice,
-        shares: s.shares
-      });
+    if(existing.length){
+      // 已持有 → 以券商截圖為準，校正股數與均價（收合成單一持倉，保留最早日期）
+      const earliest = existing.map(x=>x.date).filter(Boolean).sort()[0] || todayStr;
+      db.stock = db.stock.filter(x=>x.symbol!==s.symbol);
+      db.stock.push({ id: Date.now()+Math.random(), date: earliest, symbol: s.symbol, price: s.avgPrice, shares: s.shares });
+      updated++;
+    } else {
+      db.stock.push({ id: Date.now()+Math.random(), date: todayStr, symbol: s.symbol, price: s.avgPrice, shares: s.shares });
+      added++;
     }
     // Update current price if available
     if(s.currentPrice) db.prices[s.symbol] = s.currentPrice.toString();
-    added++;
   });
 
   saveData(); updateUI(); closeSheet('ocr');
-  toast(`✅ 已匯入 ${added} 支股票`);
+  let msg = '✅ 已匯入 '+(added+updated)+' 支股票';
+  if(updated) msg += '（更新 '+updated+' 支持股數/均價）';
+  toast(msg);
 
   // Trigger price badge update
   if(ocrParsed.some(s=>s.currentPrice)) {
