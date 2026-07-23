@@ -1071,6 +1071,12 @@ window.addEventListener('DOMContentLoaded', () => {
   if(!db.finmindToken) db.finmindToken='';
   if(!db.profile) db.profile={};
   if(!db.customCats) db.customCats=[];
+  // 一次性：把慢的 2.5/pro 模型切成 gemini-2.0-flash（更快、免費額度更高）
+  if(!db.modelMigrated20){
+    if(!db.geminiModel || /2\.5|pro/i.test(db.geminiModel)) db.geminiModel='gemini-2.0-flash';
+    db.modelMigrated20=true;
+    saveData();
+  }
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
