@@ -402,6 +402,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <!-- Accounts -->
       <div class="section-title">資金帳戶</div>
       <div class="chip-row" id="account-chips"></div>
+      <div id="account-targets" style="margin-top:8px;"></div>
 
       <!-- Expense chart -->
       <div class="card card-body" style="margin-bottom:12px;">
@@ -468,6 +469,30 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
     <!-- Settings -->
     <div class="page" id="page-settings">
+      <div class="section-title">財務規劃參數</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:12px;line-height:1.6;">
+          「分析」頁的<strong style="color:var(--text,#f1f5f9);">資產配置再平衡</strong>與 <strong style="color:var(--text,#f1f5f9);">FIRE 計算機</strong>會用這些假設值。
+        </div>
+        <div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:6px;">🎯 目標配置（三者建議合計 100%）</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">台股 %</label><input type="number" class="form-input" id="pp-tw"></div>
+          <div class="form-group"><label class="form-label">全球/美股 %</label><input type="number" class="form-input" id="pp-global"></div>
+        </div>
+        <div class="form-group"><label class="form-label">現金 %</label><input type="number" class="form-input" id="pp-cash"></div>
+        <div style="font-size:12px;color:var(--muted,#94a3b8);margin:6px 0;">🔥 FIRE / 計算機假設</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">FIRE 後年支出</label><input type="number" class="form-input" id="pp-annualExp" placeholder="700000"></div>
+          <div class="form-group"><label class="form-label">安全提領率 %</label><input type="number" class="form-input" id="pp-withdraw" step="0.1"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">預期年化報酬 %</label><input type="number" class="form-input" id="pp-return" step="0.5"></div>
+          <div class="form-group"><label class="form-label">年獎金</label><input type="number" class="form-input" id="pp-bonus"></div>
+        </div>
+        <div class="form-group"><label class="form-label">每月投入（計算機預設）</label><input type="number" class="form-input" id="pp-monthly"></div>
+        <button class="btn btn-primary" onclick="savePlanParams()"><i class="fa-solid fa-floppy-disk"></i> 儲存規劃參數</button>
+      </div>
+
       <div class="section-title">Apple 捷徑快速記帳</div>
       <div class="card card-body" style="margin-bottom:12px;">
         <div style="font-size:14px;line-height:1.8;color:var(--muted);">
@@ -1080,6 +1105,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <label class="form-label">校正餘額（網銀實際金額）</label>
       <input type="number" class="form-input" id="acc-bal" placeholder="0">
     </div>
+    <div class="form-group">
+      <label class="form-label">角色 / 用途（選填）</label>
+      <input type="text" class="form-input" id="acc-role" placeholder="例：緊急金水庫、生活消費、大目標基金">
+    </div>
+    <div class="form-group">
+      <label class="form-label">目標餘額（選填，用於達成率）</label>
+      <input type="number" class="form-input" id="acc-target" placeholder="例：300000">
+    </div>
     <div style="display:grid;grid-template-columns:1fr auto;gap:10px;">
       <button class="btn btn-primary" onclick="saveAccount()">儲存</button>
       <button class="btn btn-ghost btn-sm" style="width:80px;" onclick="deleteAccount()">刪除</button>
@@ -1121,6 +1154,10 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   // 一次性：FIRE 年支出目標對齊新規劃（70 萬 → 1,750 萬）
   if(!db.fireGoalMigrated70){ db.fireGoal=700000; db.fireGoalMigrated70=true; saveData(); }
+  // 財務規劃參數（目標配置、報酬、提領率、獎金、每月投入）
+  if(!db.planParams) db.planParams={};
+  const _pp={ twPct:40, globalPct:50, cashPct:10, returnPct:6, withdrawRate:4, annualBonus:300000, monthlyInvest:50000 };
+  Object.keys(_pp).forEach(k=>{ if(db.planParams[k]===undefined) db.planParams[k]=_pp[k]; });
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
@@ -1155,7 +1192,7 @@ function switchPage(name, tab) {
   tab.classList.add('active');
   document.getElementById('scroll-area').scrollTop = 0;
   const titles={dashboard:'💰 財富指揮官', stock:'📈 存股管理', analysis:'🔎 股票分析', cashflow:'💳 記帳', settings:'⚙️ 設定'};
-  if(name==='settings') setTimeout(() => { loadGeminiKeyToInput(); loadFinmindTokenToInput(); loadProfileToInputs(); }, 50);
+  if(name==='settings') setTimeout(() => { loadGeminiKeyToInput(); loadFinmindTokenToInput(); loadProfileToInputs(); loadPlanParamsToInputs(); }, 50);
   document.getElementById('header-title').textContent = titles[name]||'';
   if(name==='analysis') initAnalysisPage();
   if(name==='cashflow') renderExpenseChart();
@@ -1632,11 +1669,15 @@ function openAccountSheet(id=null){
     document.getElementById('acc-name').value=a.name;
     document.getElementById('acc-bal').value=a.balance;
     document.getElementById('acc-delivery').checked=!!a.isDelivery;
+    document.getElementById('acc-role').value=a.role||'';
+    document.getElementById('acc-target').value=(a.target!=null?a.target:'');
     document.getElementById('acc-sheet-title').textContent='編輯帳戶';
   } else {
     document.getElementById('acc-name').value='';
     document.getElementById('acc-bal').value='';
     document.getElementById('acc-delivery').checked=false;
+    document.getElementById('acc-role').value='';
+    document.getElementById('acc-target').value='';
     document.getElementById('acc-sheet-title').textContent='新增帳戶';
   }
   openSheet('account');
@@ -1646,9 +1687,12 @@ function saveAccount(){
   const name=document.getElementById('acc-name').value;
   const bal=parseFloat(document.getElementById('acc-bal').value)||0;
   const isDel=document.getElementById('acc-delivery').checked;
+  const role=document.getElementById('acc-role').value.trim();
+  const targetRaw=document.getElementById('acc-target').value;
+  const target=targetRaw==='' ? null : (parseFloat(targetRaw)||0);
   if(isDel) db.assets.forEach(a=>a.isDelivery=false);
-  if(id){const a=db.assets.find(x=>x.id==id);a.name=name;a.balance=bal;a.isDelivery=isDel;}
-  else db.assets.push({id:Date.now(), name, balance:bal, isDelivery:isDel});
+  if(id){const a=db.assets.find(x=>x.id==id);a.name=name;a.balance=bal;a.isDelivery=isDel;a.role=role;a.target=target;}
+  else db.assets.push({id:Date.now(), name, balance:bal, isDelivery:isDel, role, target});
   saveData(); updateUI(); closeSheet('account');
 }
 function deleteAccount(){
@@ -1666,7 +1710,7 @@ function updateUI(){
     setTimeout(() => { renderAllocation(); renderNetworthChart(); }, 50);
   }
   renderStats(); renderDashAssets(); renderAccountChips();
-  renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars(); renderDataCoverage();
+  renderStockTable(); renderSubList(); renderRecentExpenses(); renderBudgetBars(); renderDataCoverage(); renderAccountTargets();
 }
 
 // 累積配息（含息報酬用）
@@ -1712,7 +1756,8 @@ function renderStats(){
 function updateFIRE(){
   const goal=parseFloat(document.getElementById('fire-input').value)||300000;
   db.fireGoal=goal; saveData();
-  const target=goal*25, net=getStockMkt()+getCash();
+  const rate=(db.planParams&&db.planParams.withdrawRate)||4;
+  const target=goal/(rate/100), net=getStockMkt()+getCash();
   const pct=Math.min(net/target*100,999);
   document.getElementById('fire-target').textContent=fmt(target);
   document.getElementById('fire-pct').textContent=(net/target*100).toFixed(1)+'%';
@@ -1777,6 +1822,34 @@ function renderAccountChips(){
     +`<div class="chip" onclick="openAccountSheet()" style="border-style:dashed;color:var(--muted);display:flex;align-items:center;justify-content:center;min-width:64px;">
         <div style="font-size:22px;">+</div>
       </div>`;
+}
+
+// D. 帳戶角色 + 目標餘額達成率（只顯示有設角色或目標的帳戶）
+function renderAccountTargets(){
+  const el=document.getElementById('account-targets'); if(!el) return;
+  const list=db.assets.filter(a=>a.role || (a.target!=null && a.target>0));
+  if(!list.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.innerHTML=list.map(a=>{
+    const hasTgt=a.target!=null && a.target>0;
+    const pct=hasTgt?Math.min(a.balance/a.target*100,100):0;
+    const reached=hasTgt && a.balance>=a.target;
+    const barColor=reached?'#10b981':(pct>=60?'#3b82f6':'#fbbf24');
+    let right;
+    if(hasTgt){
+      const diff=a.target-a.balance;
+      right = reached ? '<span style="color:#34d399;">已達標</span>' : ('還差 $'+Math.round(diff).toLocaleString());
+    } else right='';
+    return '<div style="background:var(--card,#1e293b);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;" onclick="openAccountSheet('+a.id+')">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;">'
+        +'<span style="font-size:14px;font-weight:500;">'+a.name+(a.isDelivery?' ★':'')+'</span>'
+        +'<span style="font-size:12px;color:var(--muted,#94a3b8);">'+fmt(a.balance)+(hasTgt?(' / '+fmt(a.target)):'')+'</span>'
+      +'</div>'
+      +(a.role?'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:2px;">'+a.role+'</div>':'')
+      +(hasTgt?('<div style="height:6px;background:var(--bg3,#334155);border-radius:99px;overflow:hidden;margin-top:6px;"><div style="height:100%;width:'+pct+'%;background:'+barColor+';border-radius:99px;"></div></div>'
+        +'<div style="font-size:11px;color:'+(reached?'#34d399':'var(--muted,#94a3b8)')+';margin-top:3px;text-align:right;">'+right+'</div>'):'')
+    +'</div>';
+  }).join('');
 }
 
 function renderStockTable(){
@@ -2108,7 +2181,15 @@ let _divPerShareTTM = 0, _divPrice = 0;
 function anaDateNDaysAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().split('T')[0]; }
 function valBox(label,val){ return '<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 8px;text-align:center;"><div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">'+label+'</div><div style="font-size:17px;font-weight:700;">'+val+'</div></div>'; }
 
+let _fpInit=false;
 function initAnalysisPage(){
+  // 首次進入時，把計算機拉桿預設值套用規劃參數
+  if(!_fpInit){
+    const p=pp();
+    const mi=document.getElementById('fp-mInvest'); if(mi && p.monthlyInvest) mi.value=p.monthlyInvest;
+    const rt=document.getElementById('fp-ret'); if(rt && p.returnPct) rt.value=p.returnPct;
+    _fpInit=true;
+  }
   renderRebalance();
   renderFirePlan();
   renderAnalysisChips();
@@ -2119,11 +2200,34 @@ function initAnalysisPage(){
   }
 }
 
+// ── C. 規劃參數存取 ──
+function pp(){ return db.planParams || {}; }
+function loadPlanParamsToInputs(){
+  const p=pp(); const set=(id,v)=>{ const e=document.getElementById(id); if(e && v!==undefined && v!==null) e.value=v; };
+  set('pp-tw',p.twPct); set('pp-global',p.globalPct); set('pp-cash',p.cashPct);
+  set('pp-annualExp', db.fireGoal||700000); set('pp-withdraw',p.withdrawRate);
+  set('pp-return',p.returnPct); set('pp-bonus',p.annualBonus); set('pp-monthly',p.monthlyInvest);
+}
+function savePlanParams(){
+  if(!db.planParams) db.planParams={};
+  const num=(id,d)=>{ const v=parseFloat(document.getElementById(id).value); return isNaN(v)?d:v; };
+  const p=db.planParams;
+  p.twPct=num('pp-tw',40); p.globalPct=num('pp-global',50); p.cashPct=num('pp-cash',10);
+  p.withdrawRate=num('pp-withdraw',4); p.returnPct=num('pp-return',6);
+  p.annualBonus=num('pp-bonus',300000); p.monthlyInvest=num('pp-monthly',50000);
+  const ae=num('pp-annualExp',700000); db.fireGoal=ae;
+  const fi=document.getElementById('fire-input'); if(fi) fi.value=ae;
+  saveData(); updateUI();
+  const sum=p.twPct+p.globalPct+p.cashPct;
+  toast(Math.abs(sum-100)>0.5 ? ('✅ 已儲存（提醒：配置合計 '+sum+'%，非 100%）') : '✅ 規劃參數已儲存');
+}
+
 // ── A. 資產配置與再平衡（含台積電 ETF 穿透曝險）──
-const TARGET_ALLOC = { tw:0.40, global:0.50, cash:0.10 };  // 台股/全球/現金 目標
 const TSMC_WEIGHT = { '2330':1, '0050':0.5, '006208':0.5 }; // 台積電曝險權重（ETF 約 50%）
 function renderRebalance(){
   const el=document.getElementById('rebalance-content'); if(!el) return;
+  const p=pp();
+  const TARGET_ALLOC={ tw:(p.twPct||40)/100, global:(p.globalPct||50)/100, cash:(p.cashPct||10)/100 };
   const port=getPortfolio();
   let tw=0, global=0;
   port.forEach(s=>{ if(classifyStock(s.sym)==='us') global+=s.mkt; else tw+=s.mkt; });
@@ -2178,10 +2282,11 @@ function fpCoastAge(rows,ret,fire,coastTargetAge){ for(const r of rows){ if(r.ag
 function fpWan(v){ return Math.round(v/10000).toLocaleString()+' 萬'; }
 function renderFirePlan(){
   if(!document.getElementById('fp-mInvest')) return;
+  const p=pp();
   const startAge=parseInt(db.profile&&db.profile.age)||28;
   const startPort=Math.round(getStockMkt()+getCash());
-  const fire=(db.fireGoal||700000)*25;
-  const endAge=60, coastTargetAge=55, bonus=300000;
+  const fire=(db.fireGoal||700000)/((p.withdrawRate||4)/100);
+  const endAge=60, coastTargetAge=55, bonus=(p.annualBonus!==undefined?p.annualBonus:300000);
   const monthly=parseInt(document.getElementById('fp-mInvest').value);
   const ret=parseFloat(document.getElementById('fp-ret').value)/100;
   const switchAge=parseInt(document.getElementById('fp-switch').value);
