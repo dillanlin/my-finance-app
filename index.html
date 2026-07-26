@@ -339,6 +339,21 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div id="fire-plan-verdict" style="margin-top:14px;background:var(--bg3,#334155);border-radius:12px;padding:14px;font-size:14px;line-height:1.6;"></div>
       </div>
 
+      <!-- F. 薪水分流 SOP -->
+      <div class="section-title">薪水分流 SOP</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div id="sop-content"></div>
+      </div>
+
+      <!-- G. 年度大事曆 -->
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>年度大事曆</span>
+        <button class="btn btn-ghost btn-sm" onclick="openSheet('calendar')" style="font-size:11px;padding:4px 10px;">+ 新增事件</button>
+      </div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div id="calendar-content"></div>
+      </div>
+
       <!-- Symbol selector -->
       <div class="section-title">個股分析</div>
       <div id="analysis-chips" class="chip-row" style="margin-bottom:8px;"></div>
@@ -403,6 +418,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="section-title">資金帳戶</div>
       <div class="chip-row" id="account-chips"></div>
       <div id="account-targets" style="margin-top:8px;"></div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:12px;" onclick="openSheet('transfer')"><i class="fa-solid fa-right-left"></i> 帳戶互轉（領現金 / 外匯出金）</button>
 
       <!-- Expense chart -->
       <div class="card card-body" style="margin-bottom:12px;">
@@ -490,6 +506,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="form-group"><label class="form-label">年獎金</label><input type="number" class="form-input" id="pp-bonus"></div>
         </div>
         <div class="form-group"><label class="form-label">每月投入（計算機預設）</label><input type="number" class="form-input" id="pp-monthly"></div>
+        <div style="font-size:12px;color:var(--muted,#94a3b8);margin:6px 0;">💧 薪水分流（分析頁 SOP 用）</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">月實收（0=用個資薪資）</label><input type="number" class="form-input" id="pp-net" placeholder="0"></div>
+          <div class="form-group"><label class="form-label">生活固定開銷</label><input type="number" class="form-input" id="pp-fixed"></div>
+        </div>
+        <div class="form-group"><label class="form-label">稅金水庫（月攤）</label><input type="number" class="form-input" id="pp-tax"></div>
         <button class="btn btn-primary" onclick="savePlanParams()"><i class="fa-solid fa-floppy-disk"></i> 儲存規劃參數</button>
       </div>
 
@@ -952,6 +974,67 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- Transfer -->
+<div class="sheet-overlay" id="sheet-transfer" onclick="closeSheetOnBg(event,'sheet-transfer')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">帳戶轉帳</div>
+    <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.6;">
+      帳戶之間搬錢（不算收入或支出，不影響支出統計）。例：國泰領現金→現金錢包；台新→LINE Bank→IBKR 外匯出金。
+    </div>
+    <div class="form-group">
+      <label class="form-label">從（扣款）</label>
+      <select class="form-select" id="tf-from"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">到（入帳）</label>
+      <select class="form-select" id="tf-to"></select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">金額</label>
+      <input type="number" class="form-input" id="tf-amt" placeholder="0" style="font-size:24px;font-weight:700;">
+    </div>
+    <div class="form-group">
+      <label class="form-label">日期</label>
+      <input type="date" class="form-input" id="tf-date">
+    </div>
+    <div class="form-group">
+      <label class="form-label">備註（選填）</label>
+      <input type="text" class="form-input" id="tf-note" placeholder="例：ATM 領現、外匯出金">
+    </div>
+    <button class="btn btn-primary" onclick="doTransfer()"><i class="fa-solid fa-right-left"></i> 確認轉帳</button>
+  </div>
+</div>
+
+<!-- Calendar add -->
+<div class="sheet-overlay" id="sheet-calendar" onclick="closeSheetOnBg(event,'sheet-calendar')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">新增年度事件</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">月份</label>
+        <select class="form-select" id="cal-month">
+          <option value="1">1月</option><option value="2">2月</option><option value="3">3月</option><option value="4">4月</option><option value="5">5月</option><option value="6">6月</option><option value="7">7月</option><option value="8">8月</option><option value="9">9月</option><option value="10">10月</option><option value="11">11月</option><option value="12">12月</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">金額（收入正/支出負，可留 0）</label>
+        <input type="number" class="form-input" id="cal-amt" placeholder="0">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">事件名稱</label>
+      <input type="text" class="form-input" id="cal-event" placeholder="例：季獎金、ESPP 入帳、綜所稅">
+    </div>
+    <div class="form-group">
+      <label class="form-label">備註（選填）</label>
+      <input type="text" class="form-input" id="cal-note" placeholder="例：賣出 80%、預留繳稅">
+    </div>
+    <button class="btn btn-primary" onclick="addCalEvent()"><i class="fa-solid fa-plus"></i> 新增</button>
+  </div>
+</div>
+
 <!-- Dividend -->
 <div class="sheet-overlay" id="sheet-dividend" onclick="closeSheetOnBg(event,'sheet-dividend')">
   <div class="sheet">
@@ -1154,10 +1237,32 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   // 一次性：FIRE 年支出目標對齊新規劃（70 萬 → 1,750 萬）
   if(!db.fireGoalMigrated70){ db.fireGoal=700000; db.fireGoalMigrated70=true; saveData(); }
-  // 財務規劃參數（目標配置、報酬、提領率、獎金、每月投入）
+  // 財務規劃參數（目標配置、報酬、提領率、獎金、每月投入、薪水分流）
   if(!db.planParams) db.planParams={};
-  const _pp={ twPct:40, globalPct:50, cashPct:10, returnPct:6, withdrawRate:4, annualBonus:300000, monthlyInvest:50000 };
+  const _pp={ twPct:40, globalPct:50, cashPct:10, returnPct:6, withdrawRate:4, annualBonus:300000, monthlyInvest:50000, monthlyNet:0, fixedCost:24600, taxReserve:2100 };
   Object.keys(_pp).forEach(k=>{ if(db.planParams[k]===undefined) db.planParams[k]=_pp[k]; });
+  if(!db.transfers) db.transfers=[];
+  // 一次性：新增 LINE Bank（外匯橋樑）+ IBKR（海外券商）帳戶
+  if(!db.accountsSeededV2){
+    const nm=db.assets.map(a=>a.name);
+    if(!nm.some(n=>/line ?bank/i.test(n))) db.assets.push({id:Date.now()+11, name:'LINE Bank', balance:0, isDelivery:false, role:'外匯出金橋樑（台幣→USD）'});
+    if(!nm.some(n=>/ibkr|ib 券商|盈透/i.test(n))) db.assets.push({id:Date.now()+12, name:'IBKR', balance:0, isDelivery:false, role:'海外券商 · 全球 ETF 主帳戶'});
+    db.accountsSeededV2=true; saveData();
+  }
+  // 年度大事曆（獎金/ESPP/稅）預設，只種一次
+  if(!db.calendar){
+    db.calendar=[
+      {id:1, m:2, e:'季獎金', amt:72000, note:'20%自用/30%儲蓄/50%投資'},
+      {id:2, m:5, e:'綜所稅申報', amt:-25000, note:'預留繳稅'},
+      {id:3, m:5, e:'季獎金', amt:72000, note:''},
+      {id:4, m:7, e:'ESPP 股票入帳', amt:0, note:'賣出 80–90%，留 10–20%'},
+      {id:5, m:8, e:'季獎金', amt:72000, note:''},
+      {id:6, m:11, e:'季獎金', amt:72000, note:''},
+      {id:7, m:12, e:'年終（13/14 月）', amt:166000, note:'15%自用/25%儲蓄/60%投資'},
+      {id:8, m:12, e:'年度檢視 · 再平衡', amt:0, note:'重新評估配置'}
+    ];
+    saveData();
+  }
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
@@ -1220,6 +1325,7 @@ function openSheet(name) {
   if(name==='dividend') { openDividendSheet(); }
   if(name==='cc-ocr') { openCcOcrSheet(); }
   if(name==='all-exp') { openAllExpSheet(); }
+  if(name==='transfer') { openTransferSheet(); }
   if(name==='expense') { const r=document.getElementById('exp-reimb'); if(r) r.checked=false; }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
@@ -1257,7 +1363,8 @@ function populateSheetSelects(name) {
     expense: ['exp-account'],
     income: ['inc-account'],
     sub: ['sub-account'],
-    dividend: ['div-account']
+    dividend: ['div-account'],
+    transfer: ['tf-from','tf-to']
   };
   (maps[name]||[]).forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=accOpts; });
   // Pre-select delivery for buy/sell/dividend
@@ -1700,6 +1807,31 @@ function deleteAccount(){
   if(!id||!confirm('確定刪除？')) return;
   db.assets=db.assets.filter(a=>a.id!=id);
   saveData(); updateUI(); closeSheet('account');
+}
+
+// ── 帳戶轉帳（不計收支，只搬餘額）──
+function openTransferSheet(){
+  const d=document.getElementById('tf-date'); if(d) d.value=today();
+  const a=document.getElementById('tf-amt'); if(a) a.value='';
+  const n=document.getElementById('tf-note'); if(n) n.value='';
+  // 預設「到」選第二個帳戶，避免與「從」相同
+  setTimeout(()=>{ const to=document.getElementById('tf-to'); if(to && db.assets.length>1) to.selectedIndex=1; },0);
+}
+function doTransfer(){
+  const fromId=parseInt(document.getElementById('tf-from').value);
+  const toId=parseInt(document.getElementById('tf-to').value);
+  const amt=parseFloat(document.getElementById('tf-amt').value);
+  const date=document.getElementById('tf-date').value;
+  const note=document.getElementById('tf-note').value.trim();
+  if(!amt||amt<=0) return toast('⚠️ 請輸入金額');
+  if(fromId===toId) return toast('⚠️ 來源與目標帳戶不能相同');
+  const from=db.assets.find(a=>a.id===fromId), to=db.assets.find(a=>a.id===toId);
+  if(!from||!to) return toast('⚠️ 帳戶錯誤');
+  from.balance-=amt; to.balance+=amt;
+  if(!db.transfers) db.transfers=[];
+  db.transfers.push({id:Date.now(), date, from:fromId, to:toId, amount:amt, note});
+  saveData(); updateUI(); closeSheet('transfer');
+  toast(`✅ 已轉帳 $${Math.round(amt).toLocaleString()}：${from.name} → ${to.name}`);
 }
 
 // ── Render ────────────────────────────────────────────────
@@ -2192,6 +2324,8 @@ function initAnalysisPage(){
   }
   renderRebalance();
   renderFirePlan();
+  renderSopPlan();
+  renderCalendar();
   renderAnalysisChips();
   if(!analysisSym){
     const held=[...new Set(db.stock.map(s=>s.symbol))];
@@ -2207,6 +2341,7 @@ function loadPlanParamsToInputs(){
   set('pp-tw',p.twPct); set('pp-global',p.globalPct); set('pp-cash',p.cashPct);
   set('pp-annualExp', db.fireGoal||700000); set('pp-withdraw',p.withdrawRate);
   set('pp-return',p.returnPct); set('pp-bonus',p.annualBonus); set('pp-monthly',p.monthlyInvest);
+  set('pp-net',p.monthlyNet); set('pp-fixed',p.fixedCost); set('pp-tax',p.taxReserve);
 }
 function savePlanParams(){
   if(!db.planParams) db.planParams={};
@@ -2215,6 +2350,7 @@ function savePlanParams(){
   p.twPct=num('pp-tw',40); p.globalPct=num('pp-global',50); p.cashPct=num('pp-cash',10);
   p.withdrawRate=num('pp-withdraw',4); p.returnPct=num('pp-return',6);
   p.annualBonus=num('pp-bonus',300000); p.monthlyInvest=num('pp-monthly',50000);
+  p.monthlyNet=num('pp-net',0); p.fixedCost=num('pp-fixed',24600); p.taxReserve=num('pp-tax',2100);
   const ae=num('pp-annualExp',700000); db.fireGoal=ae;
   const fi=document.getElementById('fire-input'); if(fi) fi.value=ae;
   saveData(); updateUI();
@@ -2317,6 +2453,62 @@ function drawFireChart(carRows,noRows,fire,carAge,carCost){
     {label:'不買車',data:noRows.map(r=>r.value),borderColor:'#14b8a6',borderDash:[5,4],pointRadius:0,borderWidth:1.5,fill:false},
     {label:'完全自由',data:labels.map(()=>fire),borderColor:'#f87171',borderDash:[6,5],pointRadius:0,borderWidth:1.5,fill:false}
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+Math.round(c.parsed.y/10000)+'萬'}}},scales:{x:{ticks:{color:'#94a3b8',font:{size:10},maxTicksLimit:8}},y:{ticks:{color:'#94a3b8',font:{size:10},callback:v=>Math.round(v/10000)+'萬'},grid:{color:'rgba(255,255,255,.05)'}}}}});
+}
+
+// ── F. 薪水分流 SOP ──
+function renderSopPlan(){
+  const el=document.getElementById('sop-content'); if(!el) return;
+  const p=pp();
+  const net = (p.monthlyNet && p.monthlyNet>0) ? p.monthlyNet : (parseFloat(db.profile&&db.profile.salary)||80000);
+  const fixed = p.fixedCost||0;
+  const tax = p.taxReserve||0;
+  const invest = Math.max(0, net - fixed - tax);
+  const row=(lab,desc,amt,cls)=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--bg3,#334155);border-radius:10px;padding:12px 14px;margin-bottom:6px;'+(cls==='inv'?'border:1px solid rgba(251,191,36,.35);':cls==='in'?'border:1px solid rgba(16,185,129,.35);':'')+'">'
+    +'<div><div style="font-size:14px;font-weight:600;">'+lab+'</div>'+(desc?'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:1px;">'+desc+'</div>':'')+'</div>'
+    +'<div class="mono" style="font-size:16px;font-weight:700;color:'+(cls==='inv'?'#fbbf24':cls==='in'?'#34d399':cls==='out'?'#f87171':'var(--text,#f1f5f9)')+';">'+(cls==='out'?'−':'')+'$'+Math.round(Math.abs(amt)).toLocaleString()+'</div>'
+  +'</div>';
+  const conn='<div style="width:2px;height:12px;background:var(--border,rgba(255,255,255,.1));margin-left:22px;"></div>';
+  el.innerHTML =
+    row('月實收入帳','薪轉當天自動分流','+'+net,'in')+conn
+    +row('生活固定開銷','房租/伙食/保險/水電/交通','-'+fixed,'out')+conn
+    +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin:6px 0 6px 4px;">剩下 ≈ $'+Math.round(net-fixed).toLocaleString()+' 分兩條 ↓</div>'
+    +'<div style="display:flex;gap:8px;">'
+      +'<div style="flex:1;">'+row('稅金水庫','攤提 → 永豐/水庫',tax,'')+'</div>'
+      +'<div style="flex:1;">'+row('投資 · 全球 ETF','定期定額 VWRA/VOO',invest,'inv')+'</div>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:8px;line-height:1.6;">💡 出差津貼 → 出國基金（滿額溢出轉投資）；大小夜班津貼 → 直接投資加速。數字可在「設定 → 財務規劃參數」調整。</div>';
+}
+
+// ── G. 年度大事曆 ──
+function renderCalendar(){
+  const el=document.getElementById('calendar-content'); if(!el) return;
+  const list=[...(db.calendar||[])].sort((a,b)=>a.m-b.m);
+  if(!list.length){ el.innerHTML='<div style="color:var(--muted,#94a3b8);font-size:13px;text-align:center;padding:12px;">尚無事件，點右上「新增事件」</div>'; return; }
+  el.innerHTML=list.map(ev=>{
+    const amtTxt = ev.amt ? ('<span style="color:'+(ev.amt>0?'#34d399':'#f87171')+';font-weight:600;">'+(ev.amt>0?'+':'−')+'$'+Math.round(Math.abs(ev.amt)).toLocaleString()+'</span>') : '';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.06);">'
+      +'<div style="flex-shrink:0;width:38px;height:38px;border-radius:10px;background:rgba(59,130,246,.15);color:var(--blue,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;">'+ev.m+'月</div>'
+      +'<div style="flex:1;min-width:0;"><div style="font-size:14px;font-weight:500;">'+ev.e+'</div>'+(ev.note?'<div style="font-size:11px;color:var(--muted,#94a3b8);">'+ev.note+'</div>':'')+'</div>'
+      +'<div style="text-align:right;font-size:13px;">'+amtTxt+'</div>'
+      +'<button onclick="delCalEvent('+ev.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>'
+    +'</div>';
+  }).join('');
+}
+function addCalEvent(){
+  const m=parseInt(document.getElementById('cal-month').value);
+  const e=document.getElementById('cal-event').value.trim();
+  const amt=parseFloat(document.getElementById('cal-amt').value)||0;
+  const note=document.getElementById('cal-note').value.trim();
+  if(!e) return toast('⚠️ 請輸入事件名稱');
+  if(!db.calendar) db.calendar=[];
+  db.calendar.push({id:Date.now(), m, e, amt, note});
+  saveData(); renderCalendar(); closeSheet('calendar');
+  document.getElementById('cal-event').value=''; document.getElementById('cal-amt').value=''; document.getElementById('cal-note').value='';
+  toast('✅ 已新增事件');
+}
+function delCalEvent(id){
+  db.calendar=(db.calendar||[]).filter(x=>x.id!==id);
+  saveData(); renderCalendar();
 }
 function renderAnalysisChips(){
   const el=document.getElementById('analysis-chips');
