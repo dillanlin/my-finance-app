@@ -297,8 +297,50 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
     <!-- Analysis -->
     <div class="page" id="page-analysis">
+      <!-- 資產配置與再平衡 -->
+      <div class="section-title">資產配置與再平衡</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div id="rebalance-content"></div>
+      </div>
+
+      <!-- FIRE 規劃 -->
+      <div class="section-title">FIRE 規劃（Coast · 野馬 vs 自由）</div>
+      <div class="card card-body" style="margin-bottom:12px;">
+        <div id="fire-plan-stats" style="display:flex;gap:8px;margin-bottom:12px;"></div>
+        <div class="chart-wrap" style="height:200px;"><canvas id="fire-chart"></canvas></div>
+        <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;margin:6px 0 12px;">實線=買車計畫 · 虛線=不買車 · 紅線=完全自由門檻</div>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><label>每月投入</label><span class="mono" id="fp-mInvestV" style="color:var(--blue,#3b82f6);font-weight:600;"></span></div>
+            <input type="range" id="fp-mInvest" min="20000" max="100000" step="5000" value="50000" oninput="renderFirePlan()" style="width:100%;">
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><label>年化實質報酬</label><span id="fp-retV" style="color:var(--blue,#3b82f6);font-weight:600;"></span></div>
+            <input type="range" id="fp-ret" min="3" max="9" step="0.5" value="6" oninput="renderFirePlan()" style="width:100%;">
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><label>幾歲換輕鬆工作（Coast）</label><span id="fp-switchV" style="color:var(--blue,#3b82f6);font-weight:600;"></span></div>
+            <input type="range" id="fp-switch" min="33" max="45" step="1" value="38" oninput="renderFirePlan()" style="width:100%;">
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:2px;"><label>幾歲買野馬</label><span id="fp-carAgeV" style="color:var(--blue,#3b82f6);font-weight:600;"></span></div>
+            <input type="range" id="fp-carAge" min="30" max="42" step="1" value="35" oninput="renderFirePlan()" style="width:100%;">
+          </div>
+          <div>
+            <label style="font-size:13px;display:block;margin-bottom:4px;">野馬車型</label>
+            <select id="fp-carCost" onchange="renderFirePlan()" class="form-select">
+              <option value="0">不買</option>
+              <option value="1810000">EcoBoost ≈ 181 萬</option>
+              <option value="2300000" selected>GT V8 ≈ 230 萬</option>
+              <option value="2500000">Dark Horse ≈ 250 萬</option>
+            </select>
+          </div>
+        </div>
+        <div id="fire-plan-verdict" style="margin-top:14px;background:var(--bg3,#334155);border-radius:12px;padding:14px;font-size:14px;line-height:1.6;"></div>
+      </div>
+
       <!-- Symbol selector -->
-      <div class="section-title">選擇股票</div>
+      <div class="section-title">個股分析</div>
       <div id="analysis-chips" class="chip-row" style="margin-bottom:8px;"></div>
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <input type="text" class="form-input" id="analysis-input" placeholder="輸入代號查詢，如 2412" style="flex:1;text-transform:uppercase;">
@@ -1077,6 +1119,8 @@ window.addEventListener('DOMContentLoaded', () => {
     db.modelMigrated20=true;
     saveData();
   }
+  // 一次性：FIRE 年支出目標對齊新規劃（70 萬 → 1,750 萬）
+  if(!db.fireGoalMigrated70){ db.fireGoal=700000; db.fireGoalMigrated70=true; saveData(); }
   document.getElementById('fire-input').value = db.fireGoal||300000;
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
@@ -2065,12 +2109,109 @@ function anaDateNDaysAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); retur
 function valBox(label,val){ return '<div style="flex:1;background:var(--bg3,#334155);border-radius:12px;padding:10px 8px;text-align:center;"><div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:2px;">'+label+'</div><div style="font-size:17px;font-weight:700;">'+val+'</div></div>'; }
 
 function initAnalysisPage(){
+  renderRebalance();
+  renderFirePlan();
   renderAnalysisChips();
   if(!analysisSym){
     const held=[...new Set(db.stock.map(s=>s.symbol))];
     if(held.length){ loadAnalysis(held[0]); }
     else { document.getElementById('analysis-idle').style.display='block'; }
   }
+}
+
+// ── A. 資產配置與再平衡（含台積電 ETF 穿透曝險）──
+const TARGET_ALLOC = { tw:0.40, global:0.50, cash:0.10 };  // 台股/全球/現金 目標
+const TSMC_WEIGHT = { '2330':1, '0050':0.5, '006208':0.5 }; // 台積電曝險權重（ETF 約 50%）
+function renderRebalance(){
+  const el=document.getElementById('rebalance-content'); if(!el) return;
+  const port=getPortfolio();
+  let tw=0, global=0;
+  port.forEach(s=>{ if(classifyStock(s.sym)==='us') global+=s.mkt; else tw+=s.mkt; });
+  const cash=getCash();
+  const total=tw+global+cash;
+  if(total<=0){ el.innerHTML='<div style="color:var(--muted,#94a3b8);font-size:13px;text-align:center;padding:12px;">尚無資產資料，先在存股/記帳建立持股與帳戶</div>'; return; }
+  const rows=[
+    {k:'台股',cur:tw,tgt:TARGET_ALLOC.tw,color:'#3b82f6'},
+    {k:'全球 / 美股',cur:global,tgt:TARGET_ALLOC.global,color:'#a78bfa'},
+    {k:'現金',cur:cash,tgt:TARGET_ALLOC.cash,color:'#10b981'}
+  ];
+  let html='<div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:10px;">目標配置：台股 '+(TARGET_ALLOC.tw*100)+'% · 全球 '+(TARGET_ALLOC.global*100)+'% · 現金 '+(TARGET_ALLOC.cash*100)+'%</div>';
+  rows.forEach(r=>{
+    const curPct=r.cur/total*100, tgtPct=r.tgt*100, diff=curPct-tgtPct;
+    let advice, ac;
+    if(diff>5){ advice='偏高，暫停加碼'; ac='#f87171'; }
+    else if(diff<-5){ advice='偏低，建議加碼'; ac='#34d399'; }
+    else { advice='大致符合目標'; ac='#94a3b8'; }
+    html+='<div style="margin-bottom:11px;">'
+      +'<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;"><span>'+r.k+'</span><span style="color:var(--muted,#94a3b8);">$'+Math.round(r.cur).toLocaleString()+' · '+curPct.toFixed(1)+'% / 目標 '+tgtPct.toFixed(0)+'%</span></div>'
+      +'<div style="height:8px;background:var(--bg,#0f172a);border-radius:99px;overflow:hidden;"><div style="height:100%;width:'+Math.min(curPct,100)+'%;background:'+r.color+';border-radius:99px;"></div></div>'
+      +'<div style="font-size:11px;color:'+ac+';margin-top:3px;">'+advice+((diff>5||diff<-5)?('（差 '+(diff>0?'+':'')+diff.toFixed(1)+'%）'):'')+'</div>'
+    +'</div>';
+  });
+  // 台積電總曝險（直接 + ETF 穿透）
+  let tsmc=0;
+  port.forEach(s=>{ const w=TSMC_WEIGHT[s.sym]; if(w) tsmc+=s.mkt*w; });
+  if(tsmc>0){
+    const tsmcPct=tsmc/total*100, over=tsmcPct>40;
+    html+='<div style="border-top:1px solid rgba(255,255,255,.08);margin-top:8px;padding-top:10px;">'
+      +'<div style="display:flex;justify-content:space-between;font-size:13px;"><span>台積電總曝險（含 ETF 穿透）</span><span style="color:'+(over?'#f87171':'#34d399')+';font-weight:700;">'+tsmcPct.toFixed(1)+'%</span></div>'
+      +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:3px;line-height:1.5;">直接持有 2330 ＋ 0050/006208 約 50% 為台積電。警戒線 40%。'+(over?'<br><span style="color:#f87171;">⚠️ 過度集中，加碼全球 ETF（VWRA/VOO）分散風險</span>':'')+'</div>'
+    +'</div>';
+  }
+  el.innerHTML=html;
+}
+
+// ── B. FIRE 規劃：Coast + 野馬 vs 自由（吃 App 即時淨資產）──
+function fpProject(startPort, startAge, monthly, ret, bonus, switchAge, carAge, carCost, endAge){
+  let p=startPort; const rows=[{age:startAge,value:p}];
+  for(let age=startAge+1; age<=endAge; age++){
+    p=p*(1+ret);
+    if((age-1)<switchAge) p+=monthly*12+bonus;
+    if(age===carAge) p-=carCost;
+    if(p<0) p=0;
+    rows.push({age,value:p});
+  }
+  return rows;
+}
+function fpFireAge(rows,fire){ for(const r of rows){ if(r.value>=fire) return r.age; } return null; }
+function fpCoastAge(rows,ret,fire,coastTargetAge){ for(const r of rows){ if(r.age>coastTargetAge) break; if(r.value*Math.pow(1+ret,coastTargetAge-r.age)>=fire) return r.age; } return null; }
+function fpWan(v){ return Math.round(v/10000).toLocaleString()+' 萬'; }
+function renderFirePlan(){
+  if(!document.getElementById('fp-mInvest')) return;
+  const startAge=parseInt(db.profile&&db.profile.age)||28;
+  const startPort=Math.round(getStockMkt()+getCash());
+  const fire=(db.fireGoal||700000)*25;
+  const endAge=60, coastTargetAge=55, bonus=300000;
+  const monthly=parseInt(document.getElementById('fp-mInvest').value);
+  const ret=parseFloat(document.getElementById('fp-ret').value)/100;
+  const switchAge=parseInt(document.getElementById('fp-switch').value);
+  const carAge=parseInt(document.getElementById('fp-carAge').value);
+  const carCost=parseInt(document.getElementById('fp-carCost').value);
+  document.getElementById('fp-mInvestV').textContent='$'+monthly.toLocaleString();
+  document.getElementById('fp-retV').textContent=(ret*100).toFixed(1)+'%';
+  document.getElementById('fp-switchV').textContent=switchAge+' 歲';
+  document.getElementById('fp-carAgeV').textContent=carAge+' 歲';
+  const carRows=fpProject(startPort,startAge,monthly,ret,bonus,switchAge,carAge,carCost,endAge);
+  const noRows =fpProject(startPort,startAge,monthly,ret,bonus,switchAge,carAge,0,endAge);
+  const fCar=fpFireAge(carRows,fire), fNo=fpFireAge(noRows,fire), coast=fpCoastAge(carRows,ret,fire,coastTargetAge);
+  document.getElementById('fire-plan-stats').innerHTML =
+    valBox('Coast FIRE',(coast||'55+')+' 歲')+valBox('完全自由·含車',(fCar||'60+')+' 歲')+valBox('完全自由·不買',(fNo||'60+')+' 歲');
+  drawFireChart(carRows,noRows,fire,carAge,carCost);
+  let vtxt;
+  if(carCost===0) vtxt='不買車：約 <b style="color:var(--amber,#fbbf24);">'+(fNo||'60+')+' 歲</b>完全自由（目標 '+fpWan(fire)+'）。';
+  else if(fCar&&fNo){ const d=Math.max(0,fCar-fNo); vtxt='買 '+carAge+' 歲的野馬，完全自由從 <b>'+fNo+' 歲</b>延到 <b style="color:var(--amber,#fbbf24);">'+fCar+' 歲</b>（代價約 '+d+' 年）。目標 '+fpWan(fire)+'。'; }
+  else vtxt='目前設定 60 歲前尚未達標，試著調高每月投入或報酬率。';
+  document.getElementById('fire-plan-verdict').innerHTML=vtxt+'<br><span style="color:var(--muted,#94a3b8);font-size:12px;">起始淨值 '+fpWan(startPort)+'（App 即時）· 年獎金假設 30 萬 · '+startAge+' 歲起算 · 換工作後停止投入靠複利。</span>';
+}
+function drawFireChart(carRows,noRows,fire,carAge,carCost){
+  const ctx=document.getElementById('fire-chart'); if(!ctx) return;
+  if(charts.fire) charts.fire.destroy();
+  const labels=carRows.map(r=>r.age);
+  charts.fire=new Chart(ctx,{type:'line',data:{labels,datasets:[
+    {label:'買車',data:carRows.map(r=>r.value),borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,.1)',fill:true,tension:.2,pointRadius:0,borderWidth:2},
+    {label:'不買車',data:noRows.map(r=>r.value),borderColor:'#14b8a6',borderDash:[5,4],pointRadius:0,borderWidth:1.5,fill:false},
+    {label:'完全自由',data:labels.map(()=>fire),borderColor:'#f87171',borderDash:[6,5],pointRadius:0,borderWidth:1.5,fill:false}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+': '+Math.round(c.parsed.y/10000)+'萬'}}},scales:{x:{ticks:{color:'#94a3b8',font:{size:10},maxTicksLimit:8}},y:{ticks:{color:'#94a3b8',font:{size:10},callback:v=>Math.round(v/10000)+'萬'},grid:{color:'rgba(255,255,255,.05)'}}}}});
 }
 function renderAnalysisChips(){
   const el=document.getElementById('analysis-chips');
