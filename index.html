@@ -1088,7 +1088,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0;margin-bottom:12px;">
-      <div class="sheet-title" style="margin-bottom:0;">全部消費明細</div>
+      <div class="sheet-title" style="margin-bottom:0;">全部收支明細</div>
       <div style="display:flex;gap:6px;">
         <button id="all-exp-selbtn" class="btn btn-ghost btn-sm" onclick="toggleAllExpSelect()" style="font-size:11px;padding:4px 10px;">選取</button>
         <button class="btn btn-ghost btn-sm" onclick="bulkMoveMonth()" style="font-size:11px;padding:4px 10px;">批次改年月</button>
@@ -2219,21 +2219,41 @@ function renderAllExpList(){
   const monthItems=db.expenses.filter(e=>e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth);
   renderAllExpCats(monthItems);
   const cnt=document.getElementById('all-exp-selcount'); if(cnt) cnt.textContent='已選 '+allExpSelected.size+' 筆';
-  let items=(allExpCatFilter?monthItems.filter(e=>e.category===allExpCatFilter):monthItems).slice().sort((a,b)=>b.date.localeCompare(a.date));
+  let items=(allExpCatFilter?monthItems.filter(e=>e.category===allExpCatFilter):monthItems).slice();
   const personal=items.filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
   const reimbTot=items.filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
+  // 收入只在「全部」分類時一起顯示（收入無支出分類）
+  const showInc = !allExpCatFilter;
+  const monthInc = showInc ? (db.incomes||[]).filter(i=>i.amount>0 && i.date && String(i.date).slice(0,7)===allExpMonth) : [];
+  const incTot = monthInc.reduce((s,i)=>s+i.amount,0);
   const sm=document.getElementById('all-exp-summary');
-  if(sm) sm.innerHTML='共 '+items.length+' 筆'+(allExpCatFilter?'（'+catLabel(allExpCatFilter)+'）':'')+' · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'</span>':'');
-  if(!items.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無此分類支出</div>'; return; }
+  if(sm) sm.innerHTML='支出 '+items.length+' 筆'+(allExpCatFilter?'（'+catLabel(allExpCatFilter)+'）':'')+' · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'</span>':'')+(incTot>0?' · <span style="color:#34d399;">收入 $'+Math.round(incTot).toLocaleString()+'</span>':'');
+  if(!items.length && !monthInc.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無此分類紀錄</div>'; return; }
   const byDate={};
-  items.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
+  items.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push({t:'exp',e}); });
+  monthInc.forEach(i=>{ const d=String(i.date); (byDate[d]=byDate[d]||[]).push({t:'inc',e:i}); });
   let html='';
   Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
-    const dayPersonal=byDate[date].filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
-    const dayReimb=byDate[date].filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
-    const dayRight = '<span style="font-size:12px;color:var(--red,#f87171);">-$'+Math.round(dayPersonal).toLocaleString()+'</span>'+(dayReimb>0?' <span style="font-size:11px;color:#fbbf24;">(報帳 $'+Math.round(dayReimb).toLocaleString()+')</span>':'');
+    const dayExps=byDate[date].filter(x=>x.t==='exp').map(x=>x.e);
+    const dayInc=byDate[date].filter(x=>x.t==='inc').reduce((s,x)=>s+x.e.amount,0);
+    const dayPersonal=dayExps.filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
+    const dayReimb=dayExps.filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
+    let dayRight='';
+    if(dayPersonal>0||dayReimb>0) dayRight+='<span style="font-size:12px;color:var(--red,#f87171);">-$'+Math.round(dayPersonal).toLocaleString()+'</span>'+(dayReimb>0?' <span style="font-size:11px;color:#fbbf24;">(報帳 $'+Math.round(dayReimb).toLocaleString()+')</span>':'');
+    if(dayInc>0) dayRight+=' <span style="font-size:12px;color:#34d399;">+$'+Math.round(dayInc).toLocaleString()+'</span>';
     html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px;background:var(--bg3,#334155);"><span style="font-size:12px;color:var(--muted,#94a3b8);">'+formatDateLabel(date)+'</span>'+dayRight+'</div>';
-    byDate[date].forEach(e=>{
+    byDate[date].forEach(entry=>{
+      if(entry.t==='inc'){
+        const i=entry.e;
+        html+='<div class="list-row" style="padding:10px 4px;">'
+          +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(16,185,129,.12);">💰</div>'
+          +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+(i.source||'收入')+'</div><div class="list-sub" style="color:#34d399;">收入</div></div>'
+          +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#34d399;font-size:14px;">+$'+Math.round(i.amount).toLocaleString()+'</div>'
+          +(allExpSelectMode?'':'<button onclick="deleteIncomeInSheet('+i.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>')
+          +'</div></div>';
+        return;
+      }
+      const e=entry.e;
       if(e.id===allExpEditId){
         // 編輯模式
         const opts=getAllCats().map(c=>'<option value="'+c+'"'+(c===e.category?' selected':'')+'>'+(CAT_EMOJIS[c]||'🏷️')+' '+c+'</option>').join('');
@@ -2317,6 +2337,16 @@ function bulkMoveMonth(){
   if(!months.includes(allExpMonth)) allExpMonth=months[0]||'';
   renderAllExpMonths(months); renderAllExpList();
   toast('✅ 已將 '+n+' 筆改到 '+ny+'/'+parseInt(nm));
+}
+function deleteIncomeInSheet(id){
+  const inc=(db.incomes||[]).find(i=>i.id===id);
+  if(!inc) return;
+  if(!confirm('確定刪除這筆收入？')) return;
+  const acc=db.assets.find(a=>a.id===inc.targetId);
+  if(acc) acc.balance-=inc.amount;  // 收入曾加進餘額，刪除時扣回
+  db.incomes=db.incomes.filter(i=>i.id!==id);
+  saveData(); updateUI(); renderAllExpList();
+  toast('已刪除收入');
 }
 function deleteExpenseInSheet(id){
   db.expenses=db.expenses.filter(e=>e.id!==id);
