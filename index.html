@@ -1253,6 +1253,14 @@ window.addEventListener('DOMContentLoaded', () => {
   if(!db.finmindToken) db.finmindToken='';
   if(!db.profile) db.profile={};
   if(!db.customCats) db.customCats=[];
+  // 一次性：取消「固定支出」分類，依名稱重新歸類（房租→住房、Spotify/健身房→娛樂）
+  if(!db.fixedCatMigrated){
+    (db.subs||[]).forEach(s=>{ if(s.category==='固定支出' || !s.category) s.category = guessCategory(s.name) || '其他'; });
+    (db.expenses||[]).forEach(e=>{ if(e.category==='固定支出') e.category = '住房'; });
+    db.customCats = (db.customCats||[]).filter(c=>c!=='固定支出');
+    if(db.budgets && db.budgets['固定支出']!=null) delete db.budgets['固定支出'];
+    db.fixedCatMigrated=true; saveData();
+  }
   // 一次性：把慢的 2.5/pro 模型切成 gemini-2.0-flash（更快、免費額度更高）
   if(!db.modelMigrated20){
     if(!db.geminiModel || /2\.5|pro/i.test(db.geminiModel)) db.geminiModel='gemini-2.0-flash';
@@ -1762,7 +1770,7 @@ function addIncome() {
 function addSub() {
   const name=document.getElementById('sub-name').value;
   const amt=parseFloat(document.getElementById('sub-amt').value);
-  const cat=document.getElementById('sub-cat').value||'固定支出';
+  const cat=normalizeCategory(document.getElementById('sub-cat').value, name);
   const accId=parseInt(document.getElementById('sub-account').value);
   if(!name||!amt) return toast('⚠️ 請填寫名稱和金額');
   db.subs.push({id:Date.now(), name, amount:amt, category:cat, accountId:accId});
@@ -3470,6 +3478,7 @@ function guessCategory(merchant){
 function normalizeCategory(cat, merchant){
   cat = String(cat||'').trim();
   if(DEFAULT_CATS.includes(cat)) return cat;
+  if(cat && cat!=='固定支出' && (db.customCats||[]).includes(cat)) return cat; // 保留合法自訂分類（排除舊的固定支出）
   if(CAT_SYNONYM[cat]) return CAT_SYNONYM[cat];
   const g = guessCategory(merchant);
   return g || '其他';
