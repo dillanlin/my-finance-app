@@ -817,6 +817,15 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
+
+      <div style="text-align:center;font-size:11px;color:var(--muted,#94a3b8);margin:2px 0 10px;">— 或直接匯入檔案（更精準）—</div>
+      <div onclick="document.getElementById('richart-file').click()"
+        style="border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;">
+        <i class="fa-solid fa-file-excel" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">台新 Richart 檔案匯入 (.xls)</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">直接讀取交易明細，精準、不需 AI<br><span style="color:rgba(148,163,184,.6);">信用卡消費 + 帳戶收入，自動分類去重</span></div>
+      </div>
+      <input type="file" id="richart-file" hidden accept=".xls,.xlsx" onchange="handleRichartFile(this)">
     </div>
 
     <!-- Loading state -->
@@ -836,6 +845,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <span id="cc-summary" style="font-size:12px;color:var(--muted,#94a3b8);"></span>
       </div>
       <div id="cc-result-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:4px;padding-bottom:8px;"></div>
+      <label id="cc-clear-old" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted,#94a3b8);margin-top:8px;flex-shrink:0;cursor:pointer;">
+        <input type="checkbox" id="cc-clear-check" checked style="width:16px;height:16px;"> 匯入前先清除舊台新明細（信用卡 / LinePay 來源），避免重複
+      </label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);flex-shrink:0;">
         <button class="btn btn-ghost" onclick="closeSheet('cc-ocr')">取消</button>
         <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;" onclick="importCcData()">
@@ -3831,11 +3843,14 @@ function openCcOcrSheet() {
   if(dbg){ dbg.style.display = 'none'; dbg.innerHTML = ''; }
   ccParsedItems = [];
   ccDebugLog = [];
+  ccIsRichart = false;
+  const clr = document.getElementById('cc-clear-old'); if(clr) clr.style.display = 'none';
 }
 
 async function handleCcUpload(input) {
   const files = Array.from(input.files);
   if(!files.length) return;
+  ccIsRichart = false;
 
   if(!db.geminiKey) {
     document.getElementById('cc-error').style.display = 'block';
@@ -4279,6 +4294,16 @@ function importCcData() {
   }
   const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
 
+  // 台新 Richart 匯入：可先清除舊台新來源明細，避免重複
+  let clearedCount = 0;
+  const clr = document.getElementById('cc-clear-check');
+  if(ccIsRichart && clr && clr.checked){
+    const taixinPM = ['信用卡','Line Pay','台新Richart','台新','台新(帳戶)'];
+    const before = db.expenses.length;
+    db.expenses = db.expenses.filter(e => !taixinPM.includes(e.paymentMethod));
+    clearedCount = before - db.expenses.length;
+  }
+
   if(!db.incomes) db.incomes=[];
   let added = 0, incAdded = 0, totalAmt = 0, totalInc = 0;
   // 跳過完全重複
@@ -4315,12 +4340,116 @@ function importCcData() {
     }
   });
 
+  // 台新 Richart：帳戶餘額以檔案最新「帳戶餘額」為準（覆蓋逐筆試算）
+  if(ccIsRichart && _richartBalance != null) account.balance = _richartBalance;
+
   saveData();
   updateUI();
   closeSheet('cc-ocr');
-  let msg = '✅ 匯入支出 '+added+' 筆 $'+Math.round(totalAmt).toLocaleString();
+  let msg = (clearedCount>0 ? ('🧹 清除舊 '+clearedCount+' 筆 · ') : '') + '✅ 匯入支出 '+added+' 筆 $'+Math.round(totalAmt).toLocaleString();
   if(incAdded>0) msg += '、收入 '+incAdded+' 筆 $'+Math.round(totalInc).toLocaleString();
   toast(msg);
+  ccIsRichart = false;
+}
+
+// ── 台新 Richart .xls 直接匯入（結構化，不需 AI）──────────────
+let ccIsRichart = false;
+let _richartBalance = null;
+const RICHART_CAT = { '飲食':'餐費','交通':'交通','生活日用':'購物','衣著美妝':'購物','娛樂':'娛樂','醫療':'醫療','居家':'住房','其他':'其他' };
+function parseTwMoney(v){ if(typeof v==='number') return v; const s=String(v||'').replace(/NT\$|,|\s/g,'').replace(/[^\d.\-]/g,''); const n=parseFloat(s); return isNaN(n)?0:n; }
+function normDate(v){ if(v instanceof Date) return v.toISOString().split('T')[0]; let s=String(v||'').trim().replace(/\//g,'-'); const m=s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? (m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0')) : s; }
+function cleanMerchant(s){ s=String(s||'').trim();
+  s=s.replace(/^(連支|連加|LINEPAY|LPEPI)[＊*]/i,'').replace(/^(連支|連加|LINEPAY|LPEPI)[＊*]/i,'');
+  s=s.replace(/^(優步|優食|優食台灣股份有限公司)[－\-]?/,'').replace(/^商線[－\-]/,'');
+  return s.trim()||String(s); }
+function mapRichartCat(c){ c=String(c||'').trim(); return RICHART_CAT[c]||'其他'; }
+function richartIncomeSource(sum,note){ const t=String(sum)+String(note); if(/APPLIED|花旗|薪/.test(t)) return '薪水'; if(/息/.test(t)) return '利息'; if(/回饋/.test(t)) return '回饋'; if(/租/.test(t)) return '租金'; return String(sum||'收入'); }
+function selectAccountByName(selId,re){ const sel=document.getElementById(selId); if(!sel) return; for(const opt of sel.options){ if(re.test(opt.textContent)){ sel.value=opt.value; return; } } }
+
+function parseRichartWorkbook(wb){
+  const items=[]; _richartBalance=null;
+  wb.SheetNames.forEach(name=>{
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:false,defval:''});
+    if(!rows || rows.length<2) return;
+    const head=rows[0].map(x=>String(x).trim());
+    const col=(...names)=>{ for(const n of names){ const i=head.indexOf(n); if(i>=0) return i; } return -1; };
+    if(head.includes('消費明細')){
+      // 信用卡明細 → 支出
+      const cD=col('消費日期'), cA=col('金額'), cM=col('消費明細'), cC=col('類別');
+      for(let r=1;r<rows.length;r++){ const row=rows[r]; if(!row) continue;
+        const dt=String(row[cD]||'').trim(), amt=parseTwMoney(row[cA]), desc=String(row[cM]||'').trim();
+        if(!dt||!desc||!amt) continue;
+        if(amt>0) continue; // 正數(退款)先略過
+        items.push({kind:'expense',date:normDate(dt),merchant:cleanMerchant(desc),amount:Math.abs(amt),category:mapRichartCat(row[cC]),paymentMethod:'台新Richart'});
+      }
+    } else if(head.includes('摘要')){
+      // 帳戶明細 → 刷卡消費(支出) + 薪資/利息/回饋/租金(收入)；跳過轉帳/ATM/卡費
+      const cD=col('交易日期'), cA=col('金額'), cS=col('摘要'), cN=col('備註'), cB=col('帳戶餘額'), cT=col('轉帳說明');
+      for(let r=1;r<rows.length;r++){ const row=rows[r]; if(!row) continue;
+        const dt=String(row[cD]||'').trim(), amt=parseTwMoney(row[cA]), sum=String(row[cS]||'').trim(), note=String(row[cN]||'').trim();
+        const memo = note + ' ' + (cT>=0?String(row[cT]||''):'');
+        if(_richartBalance==null && cB>=0){ const b=parseTwMoney(row[cB]); if(b) _richartBalance=b; } // 最新一列的帳戶餘額
+        if(!dt||!amt) continue;
+        if(/卡費/.test(sum+memo)) continue;                    // 台新卡費(繳卡費)→跳過(避免與信用卡明細重複)
+        if(sum.includes('刷卡消費')){ if(amt<0) items.push({kind:'expense',date:normDate(dt),merchant:cleanMerchant(note),amount:Math.abs(amt),category:'其他',paymentMethod:'台新(帳戶)'}); continue; }
+        if(amt>0){ const src=richartIncomeSource(sum,memo); if(!/薪水|利息|回饋|租金/.test(src)) continue; items.push({kind:'income',date:normDate(dt),merchant:src,amount:amt,source:src}); continue; }
+        // 其餘(轉帳支取/CD轉出/CD提款/ATM)→跳過
+      }
+    }
+  });
+  return items;
+}
+async function handleRichartFile(input){
+  const file=input.files[0]; input.value='';
+  if(!file) return;
+  if(!window.XLSX){ document.getElementById('cc-error').style.display='block'; document.getElementById('cc-error').textContent='⚠️ 試算表函式庫未載入，請檢查網路後重開'; return; }
+  ccIsRichart=true;
+  document.getElementById('cc-card-name').value='台新Richart';
+  selectAccountByName('cc-account',/台新|richart/i);
+  document.getElementById('cc-idle').style.display='none';
+  document.getElementById('cc-error').style.display='none';
+  document.getElementById('cc-loading').style.display='block';
+  document.getElementById('cc-loading-text').textContent='解析台新 Richart 檔案...';
+  document.getElementById('cc-progress-bar').style.width='40%';
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
+    const items=parseRichartWorkbook(wb);
+    if(!items.length) throw new Error('找不到可匯入的交易（請確認是 Richart 交易明細檔）');
+    document.getElementById('cc-progress-bar').style.width='100%';
+    finalizeCcItems(items);
+  }catch(e){
+    document.getElementById('cc-loading').style.display='none';
+    document.getElementById('cc-idle').style.display='block';
+    document.getElementById('cc-error').style.display='block';
+    document.getElementById('cc-error').textContent='❌ 解析失敗：'+e.message;
+    ccIsRichart=false;
+  }
+}
+// 共用：日期正規化 + 去重 + 顯示結果（供 Richart 檔案匯入使用）
+function finalizeCcItems(allItems){
+  const currentYear=new Date().getFullYear();
+  allItems.forEach(it=>{ if(!it.date) return; const d=String(it.date).trim(); const m=d.match(/^(\d{1,2})[-\/](\d{1,2})$/); if(m){ const month=parseInt(m[1]),day=parseInt(m[2]); const now=new Date(); const year=month>now.getMonth()+1?currentYear-1:currentYear; it.date=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`; } });
+  const seen=new Map(); ccParsedItems=[];
+  const existing=db.expenses.filter(e=>e.amount).map(e=>({date:e.date,amt:Math.abs(e.amount),m:ccMerchantNorm(e.note)}));
+  const existingInc=(db.incomes||[]).map(i=>({date:i.date,amt:Math.abs(i.amount)}));
+  allItems.forEach(it=>{
+    if(!it.amount||!it.date) return;
+    const amt=Math.abs(parseFloat(it.amount)); it.kind=(it.kind==='income')?'income':'expense';
+    const m=ccMerchantNorm(it.merchant);
+    const exactKey=it.kind+'|'+it.date+'|'+m+'|'+amt;
+    if(seen.has(exactKey)) return; seen.set(exactKey,true);
+    const dateObj=new Date(it.date); let dup=false;
+    for(let o=-1;o<=1&&!dup;o++){ const cd=new Date(dateObj); cd.setDate(cd.getDate()+o); const ds=cd.toISOString().split('T')[0];
+      if(it.kind==='income'){ if(existingInc.some(e=>e.amt===amt&&e.date===ds)) dup=true; }
+      else { if(existing.some(e=>e.amt===amt&&e.date===ds&&(!e.m||!m||e.m===m||e.m.includes(m)||m.includes(e.m)))) dup=true; } }
+    if(dup) it._possibleDup=true;
+    ccParsedItems.push(it);
+  });
+  document.getElementById('cc-loading').style.display='none';
+  document.getElementById('cc-results').style.display='flex';
+  const clr=document.getElementById('cc-clear-old'); if(clr) clr.style.display = ccIsRichart?'flex':'none';
+  renderCcResults();
 }
 
 // ── OCR: Screenshot AI import ─────────────────────────────
