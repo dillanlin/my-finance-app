@@ -790,7 +790,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
 
     <!-- Idle state -->
-    <div id="cc-idle" style="flex-shrink:0;">
+    <div id="cc-idle" style="flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;">
       <div id="cc-card-info" style="background:var(--bg3,#334155);border-radius:14px;padding:14px;margin-bottom:14px;">
         <label class="form-label">支付方式（標記在備註欄）</label>
         <input type="text" class="form-input" id="cc-card-name" placeholder="例：Line Pay、國泰 CUBE、玉山 Pi 卡">
