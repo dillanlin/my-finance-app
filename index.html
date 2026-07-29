@@ -418,7 +418,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="section-title">資金帳戶</div>
       <div class="chip-row" id="account-chips"></div>
       <div id="account-targets" style="margin-top:8px;"></div>
-      <button class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:12px;" onclick="openSheet('transfer')"><i class="fa-solid fa-right-left"></i> 帳戶互轉（領現金 / 外匯出金）</button>
 
       <!-- Expense chart -->
       <div class="card card-body" style="margin-bottom:12px;">
@@ -440,33 +439,36 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <!-- Data coverage hint -->
       <div id="data-coverage" style="display:none;margin:-4px 2px 12px;line-height:1.9;"></div>
 
-      <!-- Actions -->
+      <!-- Actions: primary -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <button class="btn btn-red" onclick="openSheet('expense')"><i class="fa-solid fa-minus"></i> 記帳支出</button>
         <button class="btn btn-green" onclick="openSheet('income')"><i class="fa-solid fa-plus"></i> 新增收入</button>
       </div>
-      <button class="btn" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:white;margin-bottom:10px;" onclick="openSheet('ai-report')">
-        <i class="fa-solid fa-brain"></i> AI 月度財務體檢
-      </button>
-      <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;margin-bottom:12px;" onclick="openSheet('cc-ocr')">
-        <i class="fa-solid fa-camera"></i> 多筆消費截圖匯入
-      </button>
+
+      <!-- Actions: 工具 / 匯入（整合） -->
+      <div class="section-title">工具 / 匯入</div>
+      <div class="card card-body" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
+        <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;" onclick="openSheet('cc-ocr')">
+          <i class="fa-solid fa-camera"></i> 截圖 / 台新檔案匯入
+        </button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <button class="btn btn-ghost btn-sm" onclick="openSheet('ai-report')"><i class="fa-solid fa-brain"></i> AI 財務體檢</button>
+          <button class="btn btn-ghost btn-sm" onclick="openSheet('transfer')"><i class="fa-solid fa-right-left"></i> 帳戶互轉</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('csv-input').click()"><i class="fa-solid fa-file-excel"></i> 匯入記帳檔案</button>
+          <button class="btn btn-ghost btn-sm" onclick="postSubs()"><i class="fa-solid fa-bolt"></i> 入帳固定支出</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;line-height:1.5;">
+          截圖匯入內含台新 Richart .xls · 檔案匯入支援 CSV / Excel（需含日期、金額欄）
+        </div>
+        <input type="file" id="csv-input" hidden multiple accept=".csv,.xlsx,.xls,.numbers" onchange="handleCSV(this)">
+      </div>
 
       <!-- Fixed expenses -->
       <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
         <span>固定支出</span>
         <button class="btn btn-ghost btn-sm" onclick="openSheet('sub')">+ 新增</button>
       </div>
-      <div class="card" style="padding:0 16px;" id="sub-list"></div>
-      <button class="btn btn-ghost" style="margin-bottom:12px;" onclick="postSubs()"><i class="fa-solid fa-bolt"></i> 一鍵入帳固定支出</button>
-
-      <!-- Import -->
-      <button class="btn btn-ghost" onclick="document.getElementById('csv-input').click()"><i class="fa-solid fa-file-excel"></i> 匯入記帳檔案</button>
-      <div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:-6px;margin-bottom:12px;text-align:center;line-height:1.5;">
-        支援 CSV / Excel ‧ Numbers 請先轉存為 Excel<br>
-        <span style="color:rgba(148,163,184,.7);">需含「日期」、「金額」欄位，類別欄可選</span>
-      </div>
-      <input type="file" id="csv-input" hidden multiple accept=".csv,.xlsx,.xls,.numbers" onchange="handleCSV(this)">
+      <div class="card" style="padding:0 16px;margin-bottom:12px;" id="sub-list"></div>
 
       <!-- Budget tracker -->
       <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
@@ -1087,9 +1089,19 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="sheet-handle" style="flex-shrink:0;"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0;margin-bottom:12px;">
       <div class="sheet-title" style="margin-bottom:0;">全部消費明細</div>
-      <button class="btn btn-ghost btn-sm" onclick="bulkMoveMonth()" style="font-size:11px;padding:4px 10px;">批次改年月</button>
+      <div style="display:flex;gap:6px;">
+        <button id="all-exp-selbtn" class="btn btn-ghost btn-sm" onclick="toggleAllExpSelect()" style="font-size:11px;padding:4px 10px;">選取</button>
+        <button class="btn btn-ghost btn-sm" onclick="bulkMoveMonth()" style="font-size:11px;padding:4px 10px;">批次改年月</button>
+      </div>
     </div>
     <div id="all-exp-months" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;flex-shrink:0;"></div>
+    <div id="all-exp-cats" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;flex-shrink:0;"></div>
+    <div id="all-exp-selbar" style="display:none;align-items:center;gap:8px;flex-shrink:0;margin-bottom:8px;background:var(--bg3,#334155);border-radius:10px;padding:8px 10px;">
+      <button class="btn btn-ghost btn-sm" onclick="selectAllExp()" style="font-size:11px;padding:4px 8px;">全選</button>
+      <span id="all-exp-selcount" style="font-size:12px;color:var(--muted,#94a3b8);flex:1;">已選 0 筆</span>
+      <button class="btn btn-ghost btn-sm" onclick="bulkSetReimb(true)" style="font-size:11px;padding:4px 8px;color:#fbbf24;">🧾 可報帳</button>
+      <button class="btn btn-ghost btn-sm" onclick="bulkSetReimb(false)" style="font-size:11px;padding:4px 8px;">取消報帳</button>
+    </div>
     <div id="all-exp-summary" style="font-size:12px;color:var(--muted,#94a3b8);margin:4px 0 8px;flex-shrink:0;"></div>
     <div id="all-exp-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
   </div>
@@ -1762,7 +1774,7 @@ function renderSubList(){
   if(!db.subs.length){el.innerHTML='<div class="empty" style="padding:20px;"><span style="color:var(--muted);font-size:13px;">尚無固定支出</span></div>';return;}
   el.innerHTML=db.subs.map(s=>`
     <div class="sub-item">
-      <div><div style="font-size:15px;font-weight:500;">${s.name}</div><div style="font-size:12px;color:var(--muted);">$${s.amount.toLocaleString()} · ${s.category}</div></div>
+      <div><div style="font-size:15px;font-weight:500;">${s.name}</div><div style="font-size:12px;color:var(--muted);">$${s.amount.toLocaleString()} · ${catLabel(s.category)}</div></div>
       <button class="btn-icon" onclick="deleteSub(${s.id})" style="color:var(--red);"><i class="fa-solid fa-xmark"></i></button>
     </div>`).join('');
 }
@@ -2092,7 +2104,7 @@ function renderRecentExpenses(){
     </div>`;
     byDate[date].forEach(e=>{
       const color=catColors[e.category]||'muted';
-      const icon=CAT_EMOJIS[e.category]||'📦';
+      const icon=catEmoji(e.category);
       html+=`<div class="list-row expense-row" style="padding:10px 16px;position:relative;overflow:hidden;" id="exp-row-${e.id}">
         <div class="list-icon" style="background:rgba(${colorToRgb(color)},.15);color:var(--${color});font-size:18px;width:38px;height:38px;">${icon}</div>
         <div class="list-main">
@@ -2121,11 +2133,51 @@ function formatDateLabel(dateStr){
 // ── 全部消費明細（依月份，點進去才載入、一次只畫一個月）──
 let allExpMonth = '';
 let allExpEditId = null;  // 目前正在編輯的支出 id
+let allExpCatFilter = '';        // 分類篩選（''=全部）
+let allExpSelectMode = false;    // 多選模式
+let allExpSelected = new Set();  // 已選取的支出 id
+function toggleAllExpSelect(){
+  allExpSelectMode=!allExpSelectMode; allExpSelected.clear(); allExpEditId=null;
+  const b=document.getElementById('all-exp-selbtn'); if(b) b.textContent=allExpSelectMode?'完成':'選取';
+  const bar=document.getElementById('all-exp-selbar'); if(bar) bar.style.display=allExpSelectMode?'flex':'none';
+  renderAllExpList();
+}
+function setAllExpCat(c){ allExpCatFilter=c; renderAllExpList(); }
+function toggleExpSel(id){ if(allExpSelected.has(id)) allExpSelected.delete(id); else allExpSelected.add(id); renderAllExpList(); }
+function allExpFiltered(){
+  const monthItems=db.expenses.filter(e=>e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth);
+  return allExpCatFilter ? monthItems.filter(e=>e.category===allExpCatFilter) : monthItems;
+}
+function selectAllExp(){
+  const items=allExpFiltered();
+  const allSel=items.length>0 && items.every(e=>allExpSelected.has(e.id));
+  items.forEach(e=>{ if(allSel) allExpSelected.delete(e.id); else allExpSelected.add(e.id); });
+  renderAllExpList();
+}
+function bulkSetReimb(val){
+  if(!allExpSelected.size) return toast('請先選取項目');
+  let n=0;
+  db.expenses.forEach(e=>{ if(allExpSelected.has(e.id)){ if(val) e.reimb=true; else delete e.reimb; n++; } });
+  saveData(); updateUI(); allExpSelected.clear(); renderAllExpList();
+  toast('✅ 已將 '+n+' 筆設為'+(val?'可報帳':'不可報帳'));
+}
+function renderAllExpCats(monthItems){
+  const el=document.getElementById('all-exp-cats'); if(!el) return;
+  const cats=[...new Set(monthItems.map(e=>e.category))];
+  if(cats.length<2){ el.innerHTML=''; return; }
+  const chip=(val,label)=>{ const on=allExpCatFilter===val; return '<button onclick="setAllExpCat(\''+val+'\')" style="flex-shrink:0;border:1px solid '+(on?'var(--blue,#3b82f6)':'rgba(255,255,255,.08)')+';background:'+(on?'rgba(59,130,246,.15)':'var(--bg3,#334155)')+';color:'+(on?'var(--blue,#3b82f6)':'var(--muted,#94a3b8)')+';border-radius:99px;padding:5px 11px;font-size:12px;cursor:pointer;white-space:nowrap;">'+label+'</button>'; };
+  el.innerHTML = chip('','全部') + cats.map(c=>chip(c,catLabel(c))).join('');
+}
 function expMonths(){
   return [...new Set(db.expenses.filter(e=>e.amount>0 && e.date).map(e=>e.date.slice(0,7)))].sort((a,b)=>b.localeCompare(a));
 }
 function openAllExpSheet(){
   allExpEditId = null;
+  allExpCatFilter = '';
+  allExpSelectMode = false;
+  allExpSelected.clear();
+  const selbtn=document.getElementById('all-exp-selbtn'); if(selbtn) selbtn.textContent='選取';
+  const selbar=document.getElementById('all-exp-selbar'); if(selbar) selbar.style.display='none';
   const months = expMonths();
   if(!months.length){
     document.getElementById('all-exp-months').innerHTML='';
@@ -2164,12 +2216,15 @@ function renderDataCoverage(){
 function renderAllExpList(){
   const el=document.getElementById('all-exp-list');
   if(!el) return;
-  const items=db.expenses.filter(e=>e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth).sort((a,b)=>b.date.localeCompare(a.date));
+  const monthItems=db.expenses.filter(e=>e.amount>0 && e.date && e.date.slice(0,7)===allExpMonth);
+  renderAllExpCats(monthItems);
+  const cnt=document.getElementById('all-exp-selcount'); if(cnt) cnt.textContent='已選 '+allExpSelected.size+' 筆';
+  let items=(allExpCatFilter?monthItems.filter(e=>e.category===allExpCatFilter):monthItems).slice().sort((a,b)=>b.date.localeCompare(a.date));
   const personal=items.filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
   const reimbTot=items.filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
   const sm=document.getElementById('all-exp-summary');
-  if(sm) sm.innerHTML='共 '+items.length+' 筆 · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'（待收款）</span>':'');
-  if(!items.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無支出</div>'; return; }
+  if(sm) sm.innerHTML='共 '+items.length+' 筆'+(allExpCatFilter?'（'+catLabel(allExpCatFilter)+'）':'')+' · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'</span>':'');
+  if(!items.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無此分類支出</div>'; return; }
   const byDate={};
   items.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push(e); });
   let html='';
@@ -2195,8 +2250,17 @@ function renderAllExpList(){
             +'<button onclick="saveAllExpEdit('+e.id+')" class="btn btn-primary btn-sm">儲存</button>'
           +'</div>'
         +'</div>';
+      } else if(allExpSelectMode){
+        const checked=allExpSelected.has(e.id);
+        const sub=e.note||e.paymentMethod||'';
+        const badge=e.reimb?'<span style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.15);border-radius:4px;padding:1px 5px;margin-left:6px;">🧾報帳</span>':'';
+        html+='<div class="list-row" style="padding:10px 4px;cursor:pointer;background:'+(checked?'rgba(59,130,246,.12)':'transparent')+';" onclick="toggleExpSel('+e.id+')">'
+          +'<div style="width:34px;display:flex;align-items:center;justify-content:center;"><input type="checkbox" '+(checked?'checked':'')+' style="width:18px;height:18px;pointer-events:none;"></div>'
+          +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+catLabel(e.category)+badge+'</div>'+(sub?'<div class="list-sub">'+sub+'</div>':'')+'</div>'
+          +'<div class="list-right"><div class="list-value" style="color:'+(e.reimb?'#fbbf24':'var(--red,#f87171)')+';font-size:14px;">-$'+Math.round(e.amount).toLocaleString()+'</div></div>'
+        +'</div>';
       } else {
-        const icon=CAT_EMOJIS[e.category]||'🏷️';
+        const icon=catEmoji(e.category);
         const sub=e.note||e.paymentMethod||'';
         const badge=e.reimb?'<span style="font-size:10px;color:#fbbf24;background:rgba(251,191,36,.15);border-radius:4px;padding:1px 5px;margin-left:6px;">🧾報帳</span>':'';
         const amtColor=e.reimb?'#fbbf24':'var(--red,#f87171)';
@@ -3338,6 +3402,30 @@ async function runAiReport() {
 // ── Custom Categories ─────────────────────────────────────
 const DEFAULT_CATS = ['餐費','交通','購物','娛樂','醫療','住房','訂閱','其他'];
 const CAT_EMOJIS = {'餐費':'🍜','飲料':'🥤','交通':'🚌','購物':'🛍','娛樂':'🎮','醫療':'💊','住房':'🏠','電費':'💡','水費':'💧','瓦斯':'🔥','電信網路':'📶','保險':'🛡','稅金':'📋','學費':'🎓','治裝':'👕','刷卡':'💳','雜費':'📦','訂閱':'📱','薪水':'💰','獎金':'🎁','利息':'🏦','股票':'📈','股利':'📈','其他':'📦'};
+const CAT_FALLBACK_EMOJI = '🏷️';
+// 統一：分類文字前綴 emoji
+function catEmoji(c){ return CAT_EMOJIS[c] || CAT_FALLBACK_EMOJI; }
+function catLabel(c){ return catEmoji(c) + ' ' + (c||'其他'); }
+// 把匯入的類別正規化到 8 個標準分類（含同義詞對映與依店名猜測）
+const CAT_SYNONYM = {'飲食':'餐費','餐飲':'餐費','美食':'餐費','飲料':'餐費','食':'餐費','生活日用':'購物','日用':'購物','衣著美妝':'購物','衣著':'購物','美妝':'購物','居家':'住房','房租':'住房','水電':'住房','電信網路':'訂閱','電信':'訂閱','保險':'其他','稅金':'其他','雜費':'其他','刷卡':'其他'};
+function guessCategory(merchant){
+  const s = String(merchant||'');
+  if(/iRent|和雲|Uber|優步|計程|車隊|高鐵|台鐵|捷運|停車|加油|中油|台亞|YouBike|客運|台灣大車隊/i.test(s)) return '交通';
+  if(/健身|Netflix|Spotify|遊戲|電影|KTV|影城|樂園/i.test(s)) return '娛樂';
+  if(/藥|診所|醫院|健保|牙醫|眼科/i.test(s)) return '醫療';
+  if(/電信|遠傳|中華電|台哥大|亞太|ChatGPT|Claude|訂閱|Apple|Google|iCloud|YouTube Premium/i.test(s)) return '訂閱';
+  if(/蝦皮|購物|百貨|全聯|家樂福|小北|賣場|momo|PChome|新光三越|巨城|大潤發|好市多|Costco|寶雅|屈臣氏|康是美/i.test(s)) return '購物';
+  if(/房租|水費|電費|瓦斯|管理費/i.test(s)) return '住房';
+  if(/茶|飲|咖啡|Starbucks|星巴克|麥當勞|漢堡|超商|全家|統一超商|7-|便當|小吃|火鍋|壽司|雞|排骨|拉麵|披薩|比薩|餐|食|飯|麵|滷|燒|鍋/i.test(s)) return '餐費';
+  return '';
+}
+function normalizeCategory(cat, merchant){
+  cat = String(cat||'').trim();
+  if(DEFAULT_CATS.includes(cat)) return cat;
+  if(CAT_SYNONYM[cat]) return CAT_SYNONYM[cat];
+  const g = guessCategory(merchant);
+  return g || '其他';
+}
 
 function getAllCats(){
   if(!db.customCats) db.customCats=[];
@@ -4328,7 +4416,7 @@ function importCcData() {
         id: Date.now() + Math.random(),
         date: it.date,
         amount: amt,
-        category: it.category || '其他',
+        category: normalizeCategory(it.category, it.merchant),
         paymentMethod: it.paymentMethod || cardName,
         note: it.merchant || ''
       };
@@ -4391,7 +4479,7 @@ function parseRichartWorkbook(wb){
         if(_richartBalance==null && cB>=0){ const b=parseTwMoney(row[cB]); if(b) _richartBalance=b; } // 最新一列的帳戶餘額
         if(!dt||!amt) continue;
         if(/卡費/.test(sum+memo)) continue;                    // 台新卡費(繳卡費)→跳過(避免與信用卡明細重複)
-        if(sum.includes('刷卡消費')){ if(amt<0) items.push({kind:'expense',date:normDate(dt),merchant:cleanMerchant(note),amount:Math.abs(amt),category:'其他',paymentMethod:'台新(帳戶)'}); continue; }
+        if(sum.includes('刷卡消費')){ if(amt<0){ const mn=cleanMerchant(note); items.push({kind:'expense',date:normDate(dt),merchant:mn,amount:Math.abs(amt),category:guessCategory(mn)||'其他',paymentMethod:'台新(帳戶)'}); } continue; }
         if(amt>0){ const src=richartIncomeSource(sum,memo); if(!/薪水|利息|回饋|租金/.test(src)) continue; items.push({kind:'income',date:normDate(dt),merchant:src,amount:amt,source:src}); continue; }
         // 其餘(轉帳支取/CD轉出/CD提款/ATM)→跳過
       }
