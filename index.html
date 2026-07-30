@@ -1096,11 +1096,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
     <div id="all-exp-months" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;flex-shrink:0;"></div>
     <div id="all-exp-cats" style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;flex-shrink:0;"></div>
-    <div id="all-exp-selbar" style="display:none;align-items:center;gap:8px;flex-shrink:0;margin-bottom:8px;background:var(--bg3,#334155);border-radius:10px;padding:8px 10px;">
+    <div id="all-exp-selbar" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;flex-shrink:0;margin-bottom:8px;background:var(--bg3,#334155);border-radius:10px;padding:8px 10px;">
       <button class="btn btn-ghost btn-sm" onclick="selectAllExp()" style="font-size:11px;padding:4px 8px;">全選</button>
-      <span id="all-exp-selcount" style="font-size:12px;color:var(--muted,#94a3b8);flex:1;">已選 0 筆</span>
-      <button class="btn btn-ghost btn-sm" onclick="bulkSetReimb(true)" style="font-size:11px;padding:4px 8px;color:#fbbf24;">🧾 可報帳</button>
-      <button class="btn btn-ghost btn-sm" onclick="bulkSetReimb(false)" style="font-size:11px;padding:4px 8px;">取消報帳</button>
+      <span id="all-exp-selcount" style="font-size:12px;color:var(--muted,#94a3b8);flex:1;min-width:56px;">已選 0 筆</span>
+      <button class="btn btn-ghost btn-sm" onclick="bulkSetReimb(true)" style="font-size:11px;padding:4px 8px;color:#fbbf24;">🧾 報帳</button>
+      <button class="btn btn-ghost btn-sm" onclick="bulkSetReimb(false)" style="font-size:11px;padding:4px 8px;">取消</button>
+      <button class="btn btn-ghost btn-sm" onclick="bulkDeleteSelected()" style="font-size:11px;padding:4px 8px;color:#f87171;">🗑 刪除</button>
     </div>
     <div id="all-exp-summary" style="font-size:12px;color:var(--muted,#94a3b8);margin:4px 0 8px;flex-shrink:0;"></div>
     <div id="all-exp-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
@@ -2161,6 +2162,14 @@ function selectAllExp(){
   const allSel=items.length>0 && items.every(e=>allExpSelected.has(e.id));
   items.forEach(e=>{ if(allSel) allExpSelected.delete(e.id); else allExpSelected.add(e.id); });
   renderAllExpList();
+}
+function bulkDeleteSelected(){
+  if(!allExpSelected.size) return toast('請先選取項目');
+  if(!confirm('確定刪除選取的 '+allExpSelected.size+' 筆明細？')) return;
+  const n=allExpSelected.size;
+  db.expenses=db.expenses.filter(e=>!allExpSelected.has(e.id));
+  saveData(); updateUI(); allExpSelected.clear(); renderAllExpList();
+  toast('🗑 已刪除 '+n+' 筆');
 }
 function bulkSetReimb(val){
   if(!allExpSelected.size) return toast('請先選取項目');
