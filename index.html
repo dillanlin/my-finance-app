@@ -846,6 +846,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <span style="font-size:13px;font-weight:600;color:var(--muted,#94a3b8);">辨識結果（可編輯後匯入）</span>
         <span id="cc-summary" style="font-size:12px;color:var(--muted,#94a3b8);"></span>
       </div>
+      <div id="richart-month-row" style="display:none;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0;background:var(--bg3,#334155);border-radius:10px;padding:8px 10px;">
+        <label style="font-size:12px;color:var(--muted,#94a3b8);white-space:nowrap;">只匯入此月起</label>
+        <select id="richart-month" onchange="applyRichartMonthFilter()" style="flex:1;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;"></select>
+      </div>
       <div id="cc-result-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:4px;padding-bottom:8px;"></div>
       <label id="cc-clear-old" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted,#94a3b8);margin-top:8px;flex-shrink:0;cursor:pointer;">
         <input type="checkbox" id="cc-clear-check" checked style="width:16px;height:16px;"> 匯入前先清除舊台新明細（信用卡 / LinePay 來源），避免重複
@@ -3998,13 +4002,16 @@ function openCcOcrSheet() {
   ccParsedItems = [];
   ccDebugLog = [];
   ccIsRichart = false;
+  _richartAllItems = [];
   const clr = document.getElementById('cc-clear-old'); if(clr) clr.style.display = 'none';
+  const mr = document.getElementById('richart-month-row'); if(mr) mr.style.display = 'none';
 }
 
 async function handleCcUpload(input) {
   const files = Array.from(input.files);
   if(!files.length) return;
   ccIsRichart = false;
+  const _mr = document.getElementById('richart-month-row'); if(_mr) _mr.style.display = 'none';
 
   if(!db.geminiKey) {
     document.getElementById('cc-error').style.display = 'block';
@@ -4509,6 +4516,24 @@ function importCcData() {
 // ── 台新 Richart .xls 直接匯入（結構化，不需 AI）──────────────
 let ccIsRichart = false;
 let _richartBalance = null;
+let _richartAllItems = [];   // 完整解析結果（供起始月份篩選用）
+// 建立「起始月份」選單：列出檔案裡的所有月份，預設近 3 個月（排除太舊的）
+function setupRichartMonthFilter(){
+  const sel=document.getElementById('richart-month'); if(!sel) return;
+  const months=[...new Set(_richartAllItems.map(it=>String(it.date||'').slice(0,7)).filter(m=>/^\d{4}-\d{2}$/.test(m)))].sort().reverse();
+  if(!months.length){ document.getElementById('richart-month-row').style.display='none'; return; }
+  // 預設起始月份 = 由新到舊的第 3 個（約近 3 個月），資料不足則全部
+  const def = months[Math.min(2, months.length-1)];
+  sel.innerHTML = months.map(m=>'<option value="'+m+'"'+(m===def?' selected':'')+'>'+m+' 起（含）</option>').join('')
+    + '<option value="">全部（不限）</option>';
+  document.getElementById('richart-month-row').style.display='flex';
+}
+function applyRichartMonthFilter(){
+  const sel=document.getElementById('richart-month');
+  const cutoff = sel ? sel.value : '';
+  const items = cutoff ? _richartAllItems.filter(it=>String(it.date||'').slice(0,7) >= cutoff) : _richartAllItems.slice();
+  finalizeCcItems(items);
+}
 const RICHART_CAT = { '飲食':'餐費','交通':'交通','生活日用':'購物','衣著美妝':'購物','娛樂':'娛樂','醫療':'醫療','居家':'住房','其他':'其他' };
 function parseTwMoney(v){ if(typeof v==='number') return v; const s=String(v||'').replace(/NT\$|,|\s/g,'').replace(/[^\d.\-]/g,''); const n=parseFloat(s); return isNaN(n)?0:n; }
 function normDate(v){ if(v instanceof Date) return v.toISOString().split('T')[0]; let s=String(v||'').trim().replace(/\//g,'-'); const m=s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? (m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0')) : s; }
@@ -4571,7 +4596,9 @@ async function handleRichartFile(input){
     const items=parseRichartWorkbook(wb);
     if(!items.length) throw new Error('找不到可匯入的交易（請確認是 Richart 交易明細檔）');
     document.getElementById('cc-progress-bar').style.width='100%';
-    finalizeCcItems(items);
+    _richartAllItems = items;
+    setupRichartMonthFilter();   // 建立「起始月份」選單並套用預設（近 3 個月）
+    applyRichartMonthFilter();
   }catch(e){
     document.getElementById('cc-loading').style.display='none';
     document.getElementById('cc-idle').style.display='block';
