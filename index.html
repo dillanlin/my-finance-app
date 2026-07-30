@@ -1166,6 +1166,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <label class="form-label">入帳帳戶</label>
       <select class="form-select" id="inc-account"></select>
     </div>
+    <div class="form-group">
+      <label class="form-label">其中「報帳回收」金額（不計收入，選填）</label>
+      <input type="number" class="form-input" id="inc-reimb-amt" placeholder="0">
+      <div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:4px;line-height:1.5;">
+        例：公司匯 8,000＝交通回收 5,000 ＋ 出差津貼 3,000 → 這裡填 <b>5,000</b>，只有 3,000 算收入（回收只補回餘額）。
+      </div>
+    </div>
     <button class="btn btn-green" onclick="addIncome()"><i class="fa-solid fa-plus"></i> 存入</button>
   </div>
 </div>
@@ -1358,6 +1365,7 @@ function openSheet(name) {
   if(name==='all-exp') { openAllExpSheet(); }
   if(name==='transfer') { openTransferSheet(); }
   if(name==='expense') { const r=document.getElementById('exp-reimb'); if(r) r.checked=false; }
+  if(name==='income') { const r=document.getElementById('inc-reimb-amt'); if(r) r.value=''; }
   populateSheetSelects(name);
   document.getElementById('sheet-'+name).classList.add('open');
   // 推一個歷史狀態，讓手機「返回」手勢/按鈕能關閉 sheet 而不是離開 App
@@ -1751,18 +1759,26 @@ function addExpense() {
   document.getElementById('exp-reimb').checked=false;
 }
 
+// 真正計入收入的金額（扣掉報帳回收部分）
+function incomeReal(i){ return (parseFloat(i.amount)||0) - (parseFloat(i.reimbPortion)||0); }
 function addIncome() {
   const amt=parseFloat(document.getElementById('inc-amt').value);
   const src=document.getElementById('inc-source').value||'其他';
   const accId=parseInt(document.getElementById('inc-account').value);
   const date=document.getElementById('inc-date').value;
+  const reimbEl=document.getElementById('inc-reimb-amt');
+  const reimbAmt=reimbEl?(parseFloat(reimbEl.value)||0):0;
   if(!amt) return toast('⚠️ 請輸入金額');
   const acc=db.assets.find(a=>a.id===accId);
-  if(acc) acc.balance+=amt;
-  db.incomes.push({id:Date.now(), date, amount:amt, source:src, targetId:accId});
+  if(acc) acc.balance+=amt;                       // 全額補回餘額（含回收）
+  const rec={id:Date.now(), date, amount:amt, source:src, targetId:accId};
+  if(reimbAmt>0) rec.reimbPortion=Math.min(reimbAmt, amt);   // 報帳回收部分（不計收入）
+  db.incomes.push(rec);
   saveData(); updateUI(); closeSheet('income');
-  toast(`✅ 收入 $${amt} 入帳`);
+  const real=amt-(rec.reimbPortion||0);
+  toast(reimbAmt>0 ? ('✅ 入帳 $'+amt.toLocaleString()+'（收入 $'+real.toLocaleString()+'、回收 $'+rec.reimbPortion.toLocaleString()+'）') : ('✅ 收入 $'+amt.toLocaleString()+' 入帳'));
   document.getElementById('inc-amt').value='';
+  if(reimbEl) reimbEl.value='';
 }
 
 // ── Fixed subs ────────────────────────────────────────────
@@ -2247,9 +2263,10 @@ function renderAllExpList(){
   // 收入只在「全部」分類時一起顯示（收入無支出分類）
   const showInc = !allExpCatFilter;
   const monthInc = showInc ? (db.incomes||[]).filter(i=>i.amount>0 && i.date && String(i.date).slice(0,7)===allExpMonth) : [];
-  const incTot = monthInc.reduce((s,i)=>s+i.amount,0);
+  const incTot = monthInc.reduce((s,i)=>s+incomeReal(i),0);
+  const recoverTot = monthInc.reduce((s,i)=>s+(parseFloat(i.reimbPortion)||0),0);
   const sm=document.getElementById('all-exp-summary');
-  if(sm) sm.innerHTML='支出 '+items.length+' 筆'+(allExpCatFilter?'（'+catLabel(allExpCatFilter)+'）':'')+' · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'</span>':'')+(incTot>0?' · <span style="color:#34d399;">收入 $'+Math.round(incTot).toLocaleString()+'</span>':'');
+  if(sm) sm.innerHTML='支出 '+items.length+' 筆'+(allExpCatFilter?'（'+catLabel(allExpCatFilter)+'）':'')+' · 個人 $'+Math.round(personal).toLocaleString()+(reimbTot>0?' · <span style="color:#fbbf24;">🧾 報帳 $'+Math.round(reimbTot).toLocaleString()+'</span>':'')+(incTot>0?' · <span style="color:#34d399;">收入 $'+Math.round(incTot).toLocaleString()+'</span>':'')+(recoverTot>0?' · <span style="color:#94a3b8;">回收 $'+Math.round(recoverTot).toLocaleString()+'</span>':'');
   if(!items.length && !monthInc.length){ el.innerHTML='<div style="text-align:center;padding:32px;color:var(--muted,#94a3b8);font-size:13px;">本月無此分類紀錄</div>'; return; }
   const byDate={};
   items.forEach(e=>{ (byDate[e.date]=byDate[e.date]||[]).push({t:'exp',e}); });
@@ -2257,7 +2274,7 @@ function renderAllExpList(){
   let html='';
   Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
     const dayExps=byDate[date].filter(x=>x.t==='exp').map(x=>x.e);
-    const dayInc=byDate[date].filter(x=>x.t==='inc').reduce((s,x)=>s+x.e.amount,0);
+    const dayInc=byDate[date].filter(x=>x.t==='inc').reduce((s,x)=>s+incomeReal(x.e),0);
     const dayPersonal=dayExps.filter(e=>!e.reimb).reduce((s,e)=>s+e.amount,0);
     const dayReimb=dayExps.filter(e=>e.reimb).reduce((s,e)=>s+e.amount,0);
     let dayRight='';
@@ -2266,13 +2283,20 @@ function renderAllExpList(){
     html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px 4px;background:var(--bg3,#334155);"><span style="font-size:12px;color:var(--muted,#94a3b8);">'+formatDateLabel(date)+'</span>'+dayRight+'</div>';
     byDate[date].forEach(entry=>{
       if(entry.t==='inc'){
-        const i=entry.e;
-        html+='<div class="list-row" style="padding:10px 4px;">'
-          +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(16,185,129,.12);">💰</div>'
-          +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+(i.source||'收入')+'</div><div class="list-sub" style="color:#34d399;">收入</div></div>'
-          +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#34d399;font-size:14px;">+$'+Math.round(i.amount).toLocaleString()+'</div>'
-          +(allExpSelectMode?'':'<button onclick="deleteIncomeInSheet('+i.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>')
-          +'</div></div>';
+        const i=entry.e; const rp=parseFloat(i.reimbPortion)||0; const real=Math.max(0,(parseFloat(i.amount)||0)-rp);
+        const delBtn=(allExpSelectMode?'':'<button onclick="deleteIncomeInSheet('+i.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>');
+        if(real<=0 && rp>0){
+          // 純報帳回收（不計收入）
+          html+='<div class="list-row" style="padding:10px 4px;">'
+            +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(148,163,184,.12);">🧾</div>'
+            +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+(i.source||'報帳回收')+'</div><div class="list-sub" style="color:#94a3b8;">報帳回收（不計收入）</div></div>'
+            +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#94a3b8;font-size:14px;">+$'+Math.round(rp).toLocaleString()+'</div>'+delBtn+'</div></div>';
+        } else {
+          html+='<div class="list-row" style="padding:10px 4px;">'
+            +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(16,185,129,.12);">💰</div>'
+            +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+(i.source||'收入')+'</div><div class="list-sub" style="color:#34d399;">收入'+(rp>0?'<span style="color:#94a3b8;">（另含回收 $'+Math.round(rp).toLocaleString()+'）</span>':'')+'</div></div>'
+            +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#34d399;font-size:14px;">+$'+Math.round(real).toLocaleString()+'</div>'+delBtn+'</div></div>';
+        }
         return;
       }
       const e=entry.e;
@@ -2410,7 +2434,7 @@ function renderExpenseChart(){
     // 每月收支：收入(綠) + 支出(紅) 並排 + 支出佔收入比%(折線)
     let expMap={}, incMap={};
     exps.forEach(e=>{const m=e.date.slice(0,7);expMap[m]=(expMap[m]||0)+e.amount;});
-    (db.incomes||[]).forEach(i=>{ if(!i.date||!(i.amount>0)) return; const m=String(i.date).slice(0,7); incMap[m]=(incMap[m]||0)+i.amount; });
+    (db.incomes||[]).forEach(i=>{ if(!i.date) return; const r=incomeReal(i); if(r<=0) return; const m=String(i.date).slice(0,7); incMap[m]=(incMap[m]||0)+r; });
     let labels=[...new Set([...Object.keys(expMap),...Object.keys(incMap)])].sort();
     if(!labels.length){ ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height); return; }
     if(cfMonthLimit>0) labels=labels.slice(-cfMonthLimit);  // 只顯示最近 N 個月
@@ -3223,8 +3247,8 @@ async function runAiReport() {
   const thisIncome = (db.incomes||[]).filter(i => i.date.startsWith(ym));
   const lastIncome = (db.incomes||[]).filter(i => i.date.startsWith(prevYm));
   const thisIncMap = {}, lastIncMap = {};
-  thisIncome.forEach(i => thisIncMap[i.source||'其他'] = (thisIncMap[i.source||'其他']||0) + i.amount);
-  lastIncome.forEach(i => lastIncMap[i.source||'其他'] = (lastIncMap[i.source||'其他']||0) + i.amount);
+  thisIncome.forEach(i => thisIncMap[i.source||'其他'] = (thisIncMap[i.source||'其他']||0) + incomeReal(i));
+  lastIncome.forEach(i => lastIncMap[i.source||'其他'] = (lastIncMap[i.source||'其他']||0) + incomeReal(i));
   const thisIncTotal = Object.values(thisIncMap).reduce((a,b)=>a+b,0);
   const lastIncTotal = Object.values(lastIncMap).reduce((a,b)=>a+b,0);
 
