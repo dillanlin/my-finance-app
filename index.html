@@ -2163,11 +2163,12 @@ function formatDateLabel(dateStr){
 // ── 全部消費明細（依月份，點進去才載入、一次只畫一個月）──
 let allExpMonth = '';
 let allExpEditId = null;  // 目前正在編輯的支出 id
+let allExpIncEditId = null;  // 目前正在編輯的收入 id
 let allExpCatFilter = '';        // 分類篩選（''=全部）
 let allExpSelectMode = false;    // 多選模式
 let allExpSelected = new Set();  // 已選取的支出 id
 function toggleAllExpSelect(){
-  allExpSelectMode=!allExpSelectMode; allExpSelected.clear(); allExpEditId=null;
+  allExpSelectMode=!allExpSelectMode; allExpSelected.clear(); allExpEditId=null; allExpIncEditId=null;
   const b=document.getElementById('all-exp-selbtn'); if(b) b.textContent=allExpSelectMode?'完成':'選取';
   const bar=document.getElementById('all-exp-selbar'); if(bar) bar.style.display=allExpSelectMode?'flex':'none';
   renderAllExpList();
@@ -2211,6 +2212,7 @@ function expMonths(){
 }
 function openAllExpSheet(){
   allExpEditId = null;
+  allExpIncEditId = null;
   allExpCatFilter = '';
   allExpSelectMode = false;
   allExpSelected.clear();
@@ -2284,18 +2286,36 @@ function renderAllExpList(){
     byDate[date].forEach(entry=>{
       if(entry.t==='inc'){
         const i=entry.e; const rp=parseFloat(i.reimbPortion)||0; const real=Math.max(0,(parseFloat(i.amount)||0)-rp);
+        if(i.id===allExpIncEditId){
+          // 收入編輯模式（可調金額、來源、報帳回收）
+          html+='<div style="background:var(--bg3,#334155);border:1px solid #34d399;border-radius:10px;padding:10px;margin:6px 2px;">'
+            +'<div style="display:flex;gap:6px;margin-bottom:6px;">'
+              +'<input type="date" id="aie-date" value="'+(i.date||'')+'" style="flex:1;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;">'
+              +'<input type="number" id="aie-amt" value="'+Math.round(parseFloat(i.amount)||0)+'" placeholder="總額" style="width:100px;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;text-align:right;">'
+            +'</div>'
+            +'<input type="text" id="aie-src" value="'+String(i.source||'').replace(/"/g,'&quot;')+'" placeholder="來源（薪水/津貼…）" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:6px;">'
+            +'<label style="font-size:11px;color:var(--muted,#94a3b8);display:block;margin-bottom:2px;">其中報帳回收（不計收入）</label>'
+            +'<input type="number" id="aie-reimb" value="'+(rp>0?Math.round(rp):'')+'" placeholder="0" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:8px;">'
+            +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+              +'<button onclick="cancelAllIncEdit()" class="btn btn-ghost btn-sm">取消</button>'
+              +'<button onclick="saveAllIncEdit('+i.id+')" class="btn btn-green btn-sm">儲存</button>'
+            +'</div>'
+          +'</div>';
+          return;
+        }
+        const editBtn=(allExpSelectMode?'':'<button onclick="editAllInc('+i.id+')" style="background:rgba(52,211,153,.15);border:none;color:#34d399;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✎</button>');
         const delBtn=(allExpSelectMode?'':'<button onclick="deleteIncomeInSheet('+i.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>');
         if(real<=0 && rp>0){
           // 純報帳回收（不計收入）
           html+='<div class="list-row" style="padding:10px 4px;">'
             +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(148,163,184,.12);">🧾</div>'
             +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+(i.source||'報帳回收')+'</div><div class="list-sub" style="color:#94a3b8;">報帳回收（不計收入）</div></div>'
-            +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#94a3b8;font-size:14px;">+$'+Math.round(rp).toLocaleString()+'</div>'+delBtn+'</div></div>';
+            +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#94a3b8;font-size:14px;">+$'+Math.round(rp).toLocaleString()+'</div>'+editBtn+delBtn+'</div></div>';
         } else {
           html+='<div class="list-row" style="padding:10px 4px;">'
             +'<div class="list-icon" style="font-size:16px;width:34px;height:34px;background:rgba(16,185,129,.12);">💰</div>'
             +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+(i.source||'收入')+'</div><div class="list-sub" style="color:#34d399;">收入'+(rp>0?'<span style="color:#94a3b8;">（另含回收 $'+Math.round(rp).toLocaleString()+'）</span>':'')+'</div></div>'
-            +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#34d399;font-size:14px;">+$'+Math.round(real).toLocaleString()+'</div>'+delBtn+'</div></div>';
+            +'<div class="list-right" style="display:flex;align-items:center;gap:6px;"><div class="list-value" style="color:#34d399;font-size:14px;">+$'+Math.round(real).toLocaleString()+'</div>'+editBtn+delBtn+'</div></div>';
         }
         return;
       }
@@ -2342,8 +2362,29 @@ function renderAllExpList(){
   });
   el.innerHTML=html;
 }
-function editAllExp(id){ allExpEditId=id; renderAllExpList(); }
+function editAllExp(id){ allExpEditId=id; allExpIncEditId=null; renderAllExpList(); }
 function cancelAllExpEdit(){ allExpEditId=null; renderAllExpList(); }
+function editAllInc(id){ allExpIncEditId=id; allExpEditId=null; renderAllExpList(); }
+function cancelAllIncEdit(){ allExpIncEditId=null; renderAllExpList(); }
+function saveAllIncEdit(id){
+  const i=(db.incomes||[]).find(x=>x.id===id);
+  if(!i){ allExpIncEditId=null; return; }
+  const d=document.getElementById('aie-date').value;
+  const a=parseFloat(document.getElementById('aie-amt').value);
+  const src=document.getElementById('aie-src').value.trim();
+  const rp=parseFloat(document.getElementById('aie-reimb').value)||0;
+  if(d) i.date=d;
+  if(!isNaN(a) && a>0){
+    const acc=db.assets.find(x=>x.id===i.targetId);
+    if(acc) acc.balance += (a - (parseFloat(i.amount)||0));  // 依總額差調整帳戶餘額
+    i.amount=a;
+  }
+  if(src) i.source=src;
+  if(rp>0) i.reimbPortion=Math.min(rp, i.amount); else delete i.reimbPortion;
+  allExpIncEditId=null;
+  saveData(); updateUI(); renderAllExpList();
+  toast('✅ 已更新收入');
+}
 function saveAllExpEdit(id){
   const e=db.expenses.find(x=>x.id===id);
   if(!e){ allExpEditId=null; return; }
