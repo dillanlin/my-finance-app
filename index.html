@@ -1233,6 +1233,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <label class="form-label">目標餘額（選填，用於達成率）</label>
       <input type="number" class="form-input" id="acc-target" placeholder="例：300000">
     </div>
+    <div class="form-group">
+      <label class="form-label">資產類別（用於配置分析）</label>
+      <select class="form-select" id="acc-class">
+        <option value="cash">現金</option>
+        <option value="tw">台股</option>
+        <option value="us">全球 / 美股</option>
+      </select>
+    </div>
     <div style="display:grid;grid-template-columns:1fr auto;gap:10px;">
       <button class="btn btn-primary" onclick="saveAccount()">儲存</button>
       <button class="btn btn-ghost btn-sm" style="width:80px;" onclick="deleteAccount()">刪除</button>
@@ -1302,8 +1310,13 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   // 一次性：新增 UBS 美股帳戶（ESPP / AMAT 申購）
   if(!db.ubsSeeded){
-    if(!db.assets.some(a=>/ubs/i.test(a.name))) db.assets.push({id:Date.now()+13, name:'UBS', balance:0, isDelivery:false, role:'美股 ESPP · AMAT 申購（UBS 券商）'});
+    if(!db.assets.some(a=>/ubs/i.test(a.name))) db.assets.push({id:Date.now()+13, name:'UBS', balance:0, isDelivery:false, role:'美股 ESPP · AMAT 申購（UBS 券商）', assetClass:'us'});
     db.ubsSeeded=true; saveData();
+  }
+  // 一次性：把 UBS 歸類為美股（配置分析用）
+  if(!db.ubsClassMigrated){
+    const ubs=db.assets.find(a=>/ubs/i.test(a.name)); if(ubs && !ubs.assetClass) ubs.assetClass='us';
+    db.ubsClassMigrated=true; saveData();
   }
   // 年度大事曆：預設為空，由使用者自行新增
   if(!db.calendar) db.calendar=[];
@@ -1860,6 +1873,7 @@ function openAccountSheet(id=null){
     document.getElementById('acc-delivery').checked=!!a.isDelivery;
     document.getElementById('acc-role').value=a.role||'';
     document.getElementById('acc-target').value=(a.target!=null?a.target:'');
+    document.getElementById('acc-class').value=a.assetClass||'cash';
     document.getElementById('acc-sheet-title').textContent='編輯帳戶';
   } else {
     document.getElementById('acc-name').value='';
@@ -1867,6 +1881,7 @@ function openAccountSheet(id=null){
     document.getElementById('acc-delivery').checked=false;
     document.getElementById('acc-role').value='';
     document.getElementById('acc-target').value='';
+    document.getElementById('acc-class').value='cash';
     document.getElementById('acc-sheet-title').textContent='新增帳戶';
   }
   openSheet('account');
@@ -1879,9 +1894,10 @@ function saveAccount(){
   const role=document.getElementById('acc-role').value.trim();
   const targetRaw=document.getElementById('acc-target').value;
   const target=targetRaw==='' ? null : (parseFloat(targetRaw)||0);
+  const assetClass=document.getElementById('acc-class').value||'cash';
   if(isDel) db.assets.forEach(a=>a.isDelivery=false);
-  if(id){const a=db.assets.find(x=>x.id==id);a.name=name;a.balance=bal;a.isDelivery=isDel;a.role=role;a.target=target;}
-  else db.assets.push({id:Date.now(), name, balance:bal, isDelivery:isDel, role, target});
+  if(id){const a=db.assets.find(x=>x.id==id);a.name=name;a.balance=bal;a.isDelivery=isDel;a.role=role;a.target=target;a.assetClass=assetClass;}
+  else db.assets.push({id:Date.now(), name, balance:bal, isDelivery:isDel, role, target, assetClass});
   saveData(); updateUI(); closeSheet('account');
 }
 function deleteAccount(){
@@ -2614,9 +2630,10 @@ function renderRebalance(){
   const TARGET_ALLOC={ tw:(p.twPct!=null?p.twPct:0)/100, global:(p.globalPct!=null?p.globalPct:0)/100, cash:(p.cashPct!=null?p.cashPct:0)/100 };
   const hasTarget=(p.twPct+p.globalPct+p.cashPct)>0;
   const port=getPortfolio();
-  let tw=0, global=0;
+  let tw=0, global=0, cash=0;
   port.forEach(s=>{ if(classifyStock(s.sym)==='us') global+=s.mkt; else tw+=s.mkt; });
-  const cash=getCash();
+  // 帳戶餘額依「資產類別」歸類（UBS=美股、其餘預設現金）
+  (db.assets||[]).forEach(a=>{ const b=a.balance||0; const c=a.assetClass||'cash'; if(c==='us') global+=b; else if(c==='tw') tw+=b; else cash+=b; });
   const total=tw+global+cash;
   if(total<=0){ el.innerHTML='<div style="color:var(--muted,#94a3b8);font-size:13px;text-align:center;padding:12px;">尚無資產資料，先在存股/記帳建立持股與帳戶</div>'; return; }
   const rows=[
