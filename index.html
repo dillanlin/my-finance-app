@@ -508,6 +508,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="form-group"><label class="form-label">年獎金</label><input type="number" class="form-input" id="pp-bonus"></div>
         </div>
         <div class="form-group"><label class="form-label">每月投入（計算機預設）</label><input type="number" class="form-input" id="pp-monthly"></div>
+        <div class="form-group"><label class="form-label">🇺🇸 美股 ESPP 每月申購（AMAT）</label><input type="number" class="form-input" id="pp-espp" placeholder="例：21788"><div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:4px;">薪水的固定比例扣款申購美股（如 87,150 × 25% ≈ 21,788），入 UBS 帳戶。</div></div>
         <div style="font-size:12px;color:var(--muted,#94a3b8);margin:6px 0;">💧 薪水分流（分析頁 SOP 用）</div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">月實收</label><input type="number" class="form-input" id="pp-net" placeholder="0"></div>
@@ -1281,7 +1282,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   // 財務規劃參數（目標配置、報酬、提領率、獎金、每月投入、薪水分流）— 預設全部 0，由使用者自行填寫
   if(!db.planParams) db.planParams={};
-  const _pp={ twPct:0, globalPct:0, cashPct:0, returnPct:0, withdrawRate:0, annualBonus:0, monthlyInvest:0, monthlyNet:0, fixedCost:0, taxReserve:0 };
+  const _pp={ twPct:0, globalPct:0, cashPct:0, returnPct:0, withdrawRate:0, annualBonus:0, monthlyInvest:0, monthlyNet:0, fixedCost:0, taxReserve:0, esppMonthly:0 };
   Object.keys(_pp).forEach(k=>{ if(db.planParams[k]===undefined) db.planParams[k]=_pp[k]; });
   if(db.fireGoal===undefined) db.fireGoal=0;
   // 一次性：把先前預設的規劃數字全部歸零（FIRE/薪水分流/年度大事曆/財務規劃參數）
@@ -1298,6 +1299,11 @@ window.addEventListener('DOMContentLoaded', () => {
     if(!nm.some(n=>/line ?bank/i.test(n))) db.assets.push({id:Date.now()+11, name:'LINE Bank', balance:0, isDelivery:false, role:'外匯出金橋樑（台幣→USD）'});
     if(!nm.some(n=>/ibkr|ib 券商|盈透/i.test(n))) db.assets.push({id:Date.now()+12, name:'IBKR', balance:0, isDelivery:false, role:'海外券商 · 全球 ETF 主帳戶'});
     db.accountsSeededV2=true; saveData();
+  }
+  // 一次性：新增 UBS 美股帳戶（ESPP / AMAT 申購）
+  if(!db.ubsSeeded){
+    if(!db.assets.some(a=>/ubs/i.test(a.name))) db.assets.push({id:Date.now()+13, name:'UBS', balance:0, isDelivery:false, role:'美股 ESPP · AMAT 申購（UBS 券商）'});
+    db.ubsSeeded=true; saveData();
   }
   // 年度大事曆：預設為空，由使用者自行新增
   if(!db.calendar) db.calendar=[];
@@ -2551,7 +2557,7 @@ function loadPlanParamsToInputs(){
   const p=pp(); const set=(id,v)=>{ const e=document.getElementById(id); if(e && v!==undefined && v!==null) e.value=v; };
   set('pp-tw',p.twPct); set('pp-global',p.globalPct); set('pp-cash',p.cashPct);
   set('pp-annualExp', (db.fireGoal!=null?db.fireGoal:0)); set('pp-withdraw',p.withdrawRate);
-  set('pp-return',p.returnPct); set('pp-bonus',p.annualBonus); set('pp-monthly',p.monthlyInvest);
+  set('pp-return',p.returnPct); set('pp-bonus',p.annualBonus); set('pp-monthly',p.monthlyInvest); set('pp-espp',p.esppMonthly);
   set('pp-net',p.monthlyNet); set('pp-fixed',p.fixedCost); set('pp-tax',p.taxReserve);
 }
 function savePlanParams(){
@@ -2560,7 +2566,7 @@ function savePlanParams(){
   const p=db.planParams;
   p.twPct=num('pp-tw',40); p.globalPct=num('pp-global',50); p.cashPct=num('pp-cash',10);
   p.withdrawRate=num('pp-withdraw',4); p.returnPct=num('pp-return',6);
-  p.annualBonus=num('pp-bonus',300000); p.monthlyInvest=num('pp-monthly',50000);
+  p.annualBonus=num('pp-bonus',300000); p.monthlyInvest=num('pp-monthly',50000); p.esppMonthly=num('pp-espp',0);
   p.monthlyNet=num('pp-net',0); p.fixedCost=num('pp-fixed',24600); p.taxReserve=num('pp-tax',2100);
   const ae=num('pp-annualExp',700000); db.fireGoal=ae;
   const fi=document.getElementById('fire-input'); if(fi) fi.value=ae;
