@@ -1311,6 +1311,7 @@ window.addEventListener('DOMContentLoaded', () => {
   ['buy-date','exp-date','inc-date'].forEach(id => {
     const el = document.getElementById(id); if(el) el.value = today();
   });
+  runEsppAutoContrib();
   updateUI();
   handleURLParams();
   autoSnapshotIfNeeded();
@@ -1767,6 +1768,34 @@ function addExpense() {
 
 // 真正計入收入的金額（扣掉報帳回收部分）
 function incomeReal(i){ return (parseFloat(i.amount)||0) - (parseFloat(i.reimbPortion)||0); }
+
+// 美股 ESPP 每月自動入帳（9 月起）：把每月申購金額累加進 UBS 帳戶（屬資產）
+const ESPP_START_MONTH = '2026-09';
+function runEsppAutoContrib(){
+  const amt = parseFloat(db.planParams && db.planParams.esppMonthly) || 0;
+  if(amt<=0) return;
+  const ubs = db.assets.find(a=>/ubs/i.test(a.name));
+  if(!ubs) return;
+  const now = new Date();
+  const curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const last = db.esppLastMonth || '';   // 已入帳到的月份
+  // 產生 ESPP_START_MONTH ~ 當月、且尚未入帳的月份清單
+  let [y,mo] = ESPP_START_MONTH.split('-').map(Number);
+  const toAdd = [];
+  while(true){
+    const key = y+'-'+String(mo).padStart(2,'0');
+    if(key>curMonth) break;
+    if(!last || key>last) toAdd.push(key);
+    mo++; if(mo>12){ mo=1; y++; }
+    if(y>now.getFullYear()+2) break;   // 安全上限
+  }
+  if(!toAdd.length) return;
+  if(!db.esppLog) db.esppLog=[];
+  toAdd.forEach(key=>{ ubs.balance += amt; db.esppLog.push({month:key, amount:amt, date:key+'-01'}); });
+  db.esppLastMonth = toAdd[toAdd.length-1];
+  saveData();
+  setTimeout(()=>toast('🇺🇸 ESPP 已入帳 '+toAdd.length+' 個月 · 共 $'+Math.round(amt*toAdd.length).toLocaleString()+' → UBS'), 400);
+}
 function addIncome() {
   const amt=parseFloat(document.getElementById('inc-amt').value);
   const src=document.getElementById('inc-source').value||'其他';
@@ -2570,7 +2599,9 @@ function savePlanParams(){
   p.monthlyNet=num('pp-net',0); p.fixedCost=num('pp-fixed',24600); p.taxReserve=num('pp-tax',2100);
   const ae=num('pp-annualExp',700000); db.fireGoal=ae;
   const fi=document.getElementById('fire-input'); if(fi) fi.value=ae;
-  saveData(); updateUI();
+  saveData();
+  runEsppAutoContrib();   // 設定 ESPP 金額後，立即補齊 9 月起應入帳的月份
+  updateUI();
   const sum=p.twPct+p.globalPct+p.cashPct;
   toast(Math.abs(sum-100)>0.5 ? ('✅ 已儲存（提醒：配置合計 '+sum+'%，非 100%）') : '✅ 規劃參數已儲存');
 }
