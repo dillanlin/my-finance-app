@@ -2744,13 +2744,17 @@ function renderSopPlan(){
   const etfSet = p.etfMonthly>0;
   const invest = etfSet ? p.etfMonthly : Math.max(0, net - fixed - tax);
   const leftover = net - fixed - tax - invest;   // 剩餘/機動（可正可負）
-  const row=(lab,desc,amt,cls)=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--bg3,#334155);border-radius:10px;padding:12px 14px;margin-bottom:6px;'+(cls==='inv'?'border:1px solid rgba(251,191,36,.35);':cls==='in'?'border:1px solid rgba(16,185,129,.35);':'')+'">'
+  const espp = p.esppMonthly||0;                  // 美股 ESPP（薪資直扣）
+  const totalInvest = invest + espp;
+  const row=(lab,desc,amt,cls)=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--bg3,#334155);border-radius:10px;padding:12px 14px;margin-bottom:6px;'+(cls==='inv'?'border:1px solid rgba(251,191,36,.35);':cls==='in'?'border:1px solid rgba(16,185,129,.35);':cls==='us'?'border:1px solid rgba(59,130,246,.35);':'')+'">'
     +'<div><div style="font-size:14px;font-weight:600;">'+lab+'</div>'+(desc?'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:1px;">'+desc+'</div>':'')+'</div>'
-    +'<div class="mono" style="font-size:16px;font-weight:700;color:'+(cls==='inv'?'#fbbf24':cls==='in'?'#34d399':cls==='out'?'#f87171':'var(--text,#f1f5f9)')+';">'+(cls==='out'?'−':'')+'$'+Math.round(Math.abs(amt)).toLocaleString()+'</div>'
+    +'<div class="mono" style="font-size:16px;font-weight:700;color:'+(cls==='inv'?'#fbbf24':cls==='in'?'#34d399':cls==='us'?'#3b82f6':cls==='out'?'#f87171':'var(--text,#f1f5f9)')+';">'+(cls==='out'?'−':'')+'$'+Math.round(Math.abs(amt)).toLocaleString()+'</div>'
   +'</div>';
   const conn='<div style="width:2px;height:12px;background:var(--border,rgba(255,255,255,.1));margin-left:22px;"></div>';
   el.innerHTML =
-    row('月實收入帳','薪轉當天自動分流','+'+net,'in')+conn
+    (espp>0 ? row('🇺🇸 美股 ESPP（薪資直扣）','入帳前先扣 → UBS · AMAT', espp, 'us')
+      + '<div style="font-size:11px;color:var(--muted,#94a3b8);margin:2px 0 8px 4px;">↑ 薪資入帳前直接扣（隱性儲蓄，不含在下方月實收）</div>' : '')
+    +row('月實收入帳','薪轉當天自動分流','+'+net,'in')+conn
     +row('生活固定開銷','房租/伙食/保險/水電/交通','-'+fixed,'out')+conn
     +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin:6px 0 6px 4px;">剩下 ≈ $'+Math.round(net-fixed).toLocaleString()+' 分配 ↓</div>'
     +'<div style="display:flex;gap:8px;">'
@@ -2758,6 +2762,7 @@ function renderSopPlan(){
       +'<div style="flex:1;">'+row('投資 · 全球 ETF','定期定額 VWRA/VOO',invest,'inv')+'</div>'
     +'</div>'
     +(etfSet && Math.abs(leftover)>=1 ? ('<div style="font-size:11px;margin:6px 0 0 4px;color:'+(leftover>=0?'#34d399':'#f87171')+';">'+(leftover>=0?'剩餘機動 +$'+Math.round(leftover).toLocaleString()+'（可再投資或存起來）':'超支 −$'+Math.round(-leftover).toLocaleString()+'（投資金額大於可分配）')+'</div>') : '')
+    +(totalInvest>0 ? '<div style="margin-top:10px;background:rgba(59,130,246,.1);border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:13px;font-weight:600;">每月投入合計</span><span class="mono" style="font-size:16px;font-weight:700;color:#3b82f6;">$'+Math.round(totalInvest).toLocaleString()+'</span></div>'+(espp>0?'<div style="font-size:11px;color:var(--muted,#94a3b8);margin:3px 0 0 4px;">全球 ETF $'+Math.round(invest).toLocaleString()+' ＋ 美股 ESPP $'+Math.round(espp).toLocaleString()+'</div>':'') : '')
     +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:8px;line-height:1.6;">💡 出差津貼 → 出國基金（滿額溢出轉投資）；大小夜班津貼 → 直接投資加速。數字可在「設定 → 財務規劃參數」調整。</div>';
 }
 
