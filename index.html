@@ -509,6 +509,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
         <div class="form-group"><label class="form-label">每月投入（計算機預設）</label><input type="number" class="form-input" id="pp-monthly"></div>
         <div class="form-group"><label class="form-label">🇺🇸 美股 ESPP 每月申購（AMAT）</label><input type="number" class="form-input" id="pp-espp" placeholder="例：21788"><div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:4px;">薪水的固定比例扣款申購美股（如 87,150 × 25% ≈ 21,788），入 UBS 帳戶。</div></div>
+        <div class="form-group"><label class="form-label">🌏 全球 ETF 每月投資（定期定額）</label><input type="number" class="form-input" id="pp-etf" placeholder="例：59250"><div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:4px;">薪水分流 SOP 的「投資·全球 ETF」金額（留空＝自動用剩餘）。</div></div>
         <div style="font-size:12px;color:var(--muted,#94a3b8);margin:6px 0;">💧 薪水分流（分析頁 SOP 用）</div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">月實收</label><input type="number" class="form-input" id="pp-net" placeholder="0"></div>
@@ -1290,7 +1291,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   // 財務規劃參數（目標配置、報酬、提領率、獎金、每月投入、薪水分流）— 預設全部 0，由使用者自行填寫
   if(!db.planParams) db.planParams={};
-  const _pp={ twPct:0, globalPct:0, cashPct:0, returnPct:0, withdrawRate:0, annualBonus:0, monthlyInvest:0, monthlyNet:0, fixedCost:0, taxReserve:0, esppMonthly:0 };
+  const _pp={ twPct:0, globalPct:0, cashPct:0, returnPct:0, withdrawRate:0, annualBonus:0, monthlyInvest:0, monthlyNet:0, fixedCost:0, taxReserve:0, esppMonthly:0, etfMonthly:0 };
   Object.keys(_pp).forEach(k=>{ if(db.planParams[k]===undefined) db.planParams[k]=_pp[k]; });
   if(db.fireGoal===undefined) db.fireGoal=0;
   // 一次性：把先前預設的規劃數字全部歸零（FIRE/薪水分流/年度大事曆/財務規劃參數）
@@ -2602,7 +2603,7 @@ function loadPlanParamsToInputs(){
   const p=pp(); const set=(id,v)=>{ const e=document.getElementById(id); if(e && v!==undefined && v!==null) e.value=v; };
   set('pp-tw',p.twPct); set('pp-global',p.globalPct); set('pp-cash',p.cashPct);
   set('pp-annualExp', (db.fireGoal!=null?db.fireGoal:0)); set('pp-withdraw',p.withdrawRate);
-  set('pp-return',p.returnPct); set('pp-bonus',p.annualBonus); set('pp-monthly',p.monthlyInvest); set('pp-espp',p.esppMonthly);
+  set('pp-return',p.returnPct); set('pp-bonus',p.annualBonus); set('pp-monthly',p.monthlyInvest); set('pp-espp',p.esppMonthly); set('pp-etf',p.etfMonthly);
   set('pp-net',p.monthlyNet); set('pp-fixed',p.fixedCost); set('pp-tax',p.taxReserve);
 }
 function savePlanParams(){
@@ -2611,7 +2612,7 @@ function savePlanParams(){
   const p=db.planParams;
   p.twPct=num('pp-tw',40); p.globalPct=num('pp-global',50); p.cashPct=num('pp-cash',10);
   p.withdrawRate=num('pp-withdraw',4); p.returnPct=num('pp-return',6);
-  p.annualBonus=num('pp-bonus',300000); p.monthlyInvest=num('pp-monthly',50000); p.esppMonthly=num('pp-espp',0);
+  p.annualBonus=num('pp-bonus',300000); p.monthlyInvest=num('pp-monthly',50000); p.esppMonthly=num('pp-espp',0); p.etfMonthly=num('pp-etf',0);
   p.monthlyNet=num('pp-net',0); p.fixedCost=num('pp-fixed',24600); p.taxReserve=num('pp-tax',2100);
   const ae=num('pp-annualExp',700000); db.fireGoal=ae;
   const fi=document.getElementById('fire-input'); if(fi) fi.value=ae;
@@ -2739,7 +2740,10 @@ function renderSopPlan(){
   const net = (p.monthlyNet!=null?p.monthlyNet:0);
   const fixed = p.fixedCost||0;
   const tax = p.taxReserve||0;
-  const invest = Math.max(0, net - fixed - tax);
+  // 投資·全球ETF：有設定就用設定值，否則用剩餘（實收−固定−稅金）
+  const etfSet = p.etfMonthly>0;
+  const invest = etfSet ? p.etfMonthly : Math.max(0, net - fixed - tax);
+  const leftover = net - fixed - tax - invest;   // 剩餘/機動（可正可負）
   const row=(lab,desc,amt,cls)=>'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--bg3,#334155);border-radius:10px;padding:12px 14px;margin-bottom:6px;'+(cls==='inv'?'border:1px solid rgba(251,191,36,.35);':cls==='in'?'border:1px solid rgba(16,185,129,.35);':'')+'">'
     +'<div><div style="font-size:14px;font-weight:600;">'+lab+'</div>'+(desc?'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:1px;">'+desc+'</div>':'')+'</div>'
     +'<div class="mono" style="font-size:16px;font-weight:700;color:'+(cls==='inv'?'#fbbf24':cls==='in'?'#34d399':cls==='out'?'#f87171':'var(--text,#f1f5f9)')+';">'+(cls==='out'?'−':'')+'$'+Math.round(Math.abs(amt)).toLocaleString()+'</div>'
@@ -2748,11 +2752,12 @@ function renderSopPlan(){
   el.innerHTML =
     row('月實收入帳','薪轉當天自動分流','+'+net,'in')+conn
     +row('生活固定開銷','房租/伙食/保險/水電/交通','-'+fixed,'out')+conn
-    +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin:6px 0 6px 4px;">剩下 ≈ $'+Math.round(net-fixed).toLocaleString()+' 分兩條 ↓</div>'
+    +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin:6px 0 6px 4px;">剩下 ≈ $'+Math.round(net-fixed).toLocaleString()+' 分配 ↓</div>'
     +'<div style="display:flex;gap:8px;">'
       +'<div style="flex:1;">'+row('稅金水庫','攤提 → 永豐/水庫',tax,'')+'</div>'
       +'<div style="flex:1;">'+row('投資 · 全球 ETF','定期定額 VWRA/VOO',invest,'inv')+'</div>'
     +'</div>'
+    +(etfSet && Math.abs(leftover)>=1 ? ('<div style="font-size:11px;margin:6px 0 0 4px;color:'+(leftover>=0?'#34d399':'#f87171')+';">'+(leftover>=0?'剩餘機動 +$'+Math.round(leftover).toLocaleString()+'（可再投資或存起來）':'超支 −$'+Math.round(-leftover).toLocaleString()+'（投資金額大於可分配）')+'</div>') : '')
     +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-top:8px;line-height:1.6;">💡 出差津貼 → 出國基金（滿額溢出轉投資）；大小夜班津貼 → 直接投資加速。數字可在「設定 → 財務規劃參數」調整。</div>';
 }
 
