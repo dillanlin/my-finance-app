@@ -1250,6 +1250,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- Price alerts (±5%) -->
+<div class="sheet-overlay" id="sheet-alerts" onclick="closeSheetOnBg(event,'sheet-alerts')">
+  <div class="sheet" style="max-height:80vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="sheet-handle" style="flex-shrink:0;"></div>
+    <div class="sheet-title" style="flex-shrink:0;margin-bottom:4px;">📢 股價異動提醒</div>
+    <div style="font-size:12px;color:var(--muted,#94a3b8);margin-bottom:10px;flex-shrink:0;">近一交易日漲跌超過 ±5% 的持股</div>
+    <div id="alerts-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+    <button class="btn btn-ghost" style="margin-top:10px;flex-shrink:0;" onclick="closeSheet('alerts')">知道了</button>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -1633,6 +1644,7 @@ async function fetchAllPrices() {
   icon.className = 'fa-solid fa-arrows-rotate spin';
 
   let results = {};
+  let changes = {};   // 漲跌幅 %（最近交易日 vs 前一日）
   let errors = [];
 
   // ── 方法 1: FinMind API（主要來源 - 穩定且 CORS 友善）──
@@ -1653,9 +1665,13 @@ async function fetchAllPrices() {
           const data = await r.json();
           if(data.status === 200 && data.data && data.data.length) {
             // 取最新一筆
-            const latest = data.data[data.data.length - 1];
+            const arr = data.data;
+            const latest = arr[arr.length - 1];
             const price = parseFloat(latest.close);
-            if(price && !isNaN(price)) results[sym] = price;
+            if(price && !isNaN(price)) {
+              results[sym] = price;
+              if(arr.length >= 2){ const prev = parseFloat(arr[arr.length-2].close); if(prev>0) changes[sym] = (price-prev)/prev*100; }
+            }
           } else if(data.msg) {
             errors.push(sym+': '+data.msg);
           }
@@ -1679,7 +1695,11 @@ async function fetchAllPrices() {
           const item = list.find(d => d.Code === sym);
           if(item) {
             const price = parseFloat((item.ClosingPrice || '').replace(/,/g, ''));
-            if(price && !isNaN(price)) results[sym] = price;
+            if(price && !isNaN(price)) {
+              results[sym] = price;
+              const chg = parseFloat((item.Change || '').replace(/,/g, ''));
+              if(!isNaN(chg)){ const prev = price - chg; if(prev>0) changes[sym] = chg/prev*100; }
+            }
           }
         });
       }
@@ -1712,6 +1732,8 @@ async function fetchAllPrices() {
   Object.entries(results).forEach(([sym, price]) => {
     db.prices[sym] = price.toString();
   });
+  if(!db.priceChange) db.priceChange={};
+  Object.entries(changes).forEach(([sym, pct]) => { db.priceChange[sym] = Math.round(pct*10)/10; });
 
   btn.disabled = false;
   icon.className = 'fa-solid fa-arrows-rotate';
@@ -1750,6 +1772,35 @@ async function fetchAllPrices() {
   }
   saveData();
   updateUI();
+  if(ok > 0) showPriceAlerts();
+}
+
+// ── 股價異動提醒（±5%）──
+const PRICE_ALERT_PCT = 5;
+function showPriceAlerts(){
+  const held=[...new Set(db.stock.map(s=>s.symbol))];
+  const alerts=held.map(sym=>({sym, pct:(db.priceChange||{})[sym], price:parseFloat(db.prices[sym])||0}))
+    .filter(a=>a.pct!=null && Math.abs(a.pct)>=PRICE_ALERT_PCT)
+    .sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct));
+  const list=document.getElementById('alerts-list');
+  if(!alerts.length){ return; }
+  list.innerHTML=alerts.map(a=>{
+    const up=a.pct>=0; const col=up?'#34d399':'#f87171'; const arrow=up?'▲':'▼';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 4px;border-bottom:1px solid rgba(255,255,255,.06);">'
+      +'<div><div style="font-size:16px;font-weight:700;color:var(--blue,#3b82f6);">'+a.sym+'</div><div style="font-size:12px;color:var(--muted,#94a3b8);">現價 $'+a.price.toLocaleString()+'</div></div>'
+      +'<div style="text-align:right;"><div style="font-size:18px;font-weight:700;color:'+col+';">'+arrow+' '+(up?'+':'')+a.pct.toFixed(1)+'%</div><div style="font-size:11px;color:var(--muted,#94a3b8);">近一交易日</div></div>'
+    +'</div>';
+  }).join('');
+  openSheet('alerts');
+  tryPriceNotify(alerts);
+}
+function tryPriceNotify(alerts){
+  try{
+    if(!('Notification' in window)) return;
+    const fire=()=>{ try{ new Notification('📢 股價異動提醒 (±'+PRICE_ALERT_PCT+'%)', { body: alerts.map(a=>a.sym+' '+(a.pct>=0?'+':'')+a.pct.toFixed(1)+'%').join('、') }); }catch(e){} };
+    if(Notification.permission==='granted') fire();
+    else if(Notification.permission!=='denied') Notification.requestPermission().then(p=>{ if(p==='granted') fire(); });
+  }catch(e){}
 }
 
 // ── Expense / income ─────────────────────────────────────
