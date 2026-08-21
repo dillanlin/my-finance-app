@@ -829,7 +829,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div style="font-size:15px;font-weight:600;color:var(--text);">檔案匯入（台新 .xls / CSV / Excel）</div>
         <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">自動判別台新 Richart 或一般記帳檔<br><span style="color:rgba(148,163,184,.6);">可從「檔案」App 選取（iCloud/我的 iPhone），精準、不需 AI</span></div>
       </div>
-      <input type="file" id="rec-import-file" hidden accept=".xls,.xlsx,.csv,.numbers" onchange="handleImportFile(this)">
+      <input type="file" id="rec-import-file" hidden onchange="handleImportFile(this)">
     </div>
 
     <!-- Loading state -->
@@ -4794,6 +4794,7 @@ async function handleImportFile(input){
   const file=input.files[0];
   if(!file) return;
   const ext=(file.name.toLowerCase().split('.').pop())||'';
+  if(!['xls','xlsx','csv','numbers'].includes(ext)){ input.value=''; toast('請選擇 .xls / .xlsx / .csv 檔'); return; }
   if(ext==='csv' || ext==='numbers'){ handleCSV(input); return; }  // 一般記帳檔
   if(!window.XLSX){ handleCSV(input); return; }
   // 只讀取一次 arrayBuffer（iOS Safari 重複讀取同一 File 會失敗）
