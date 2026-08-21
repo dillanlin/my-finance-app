@@ -2468,6 +2468,11 @@ function renderAllExpList(){
           +'<select id="aee-cat" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:6px;">'+opts+'</select>'
           +'<input type="text" id="aee-note" value="'+String(e.note||e.paymentMethod||'').replace(/"/g,'&quot;')+'" placeholder="備註/店家" style="width:100%;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;margin-bottom:8px;">'
           +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;cursor:pointer;"><input type="checkbox" id="aee-reimb"'+(e.reimb?' checked':'')+' style="width:16px;height:16px;">🧾 可報帳（不計入支出）</label>'
+          +'<div style="font-size:11px;color:var(--muted,#94a3b8);margin-bottom:4px;">這筆其實不是支出？</div>'
+          +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
+            +'<button onclick="convertExpToIncome('+e.id+')" class="btn btn-sm" style="background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.4);">💰 改成收入</button>'
+            +'<button onclick="convertExpToTransfer('+e.id+')" class="btn btn-sm" style="background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.4);">🔄 改成互轉</button>'
+          +'</div>'
           +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
             +'<button onclick="cancelAllExpEdit()" class="btn btn-ghost btn-sm">取消</button>'
             +'<button onclick="saveAllExpEdit('+e.id+')" class="btn btn-primary btn-sm">儲存</button>'
@@ -2540,6 +2545,40 @@ function saveAllExpEdit(id){
   if(!months.includes(allExpMonth)) allExpMonth=months[0]||'';
   renderAllExpMonths(months); renderAllExpList();
   toast('✅ 已更新');
+}
+// 把一筆「被誤存成支出」的紀錄改成收入（金額轉正、移到收入清單）
+function convertExpToIncome(id){
+  const e=db.expenses.find(x=>x.id===id);
+  if(!e){ allExpEditId=null; renderAllExpList(); return; }
+  // 沿用編輯框裡的最新日期/金額（若有調整）
+  const dEl=document.getElementById('aee-date'), aEl=document.getElementById('aee-amt');
+  const date=(dEl&&dEl.value)||e.date;
+  const amt=(aEl&&!isNaN(parseFloat(aEl.value)))?parseFloat(aEl.value):e.amount;
+  const src=(e.note||e.paymentMethod||e.category||'收入').replace(/^收入$/,'其他');
+  db.incomes=db.incomes||[];
+  db.incomes.push({id:Date.now()+Math.random(), date, amount:Math.abs(amt), source:src});
+  db.expenses=db.expenses.filter(x=>x.id!==id);
+  allExpEditId=null;
+  saveData(); updateUI();
+  const months=expMonths(); if(!months.includes(allExpMonth)) allExpMonth=months[0]||'';
+  renderAllExpMonths(months); renderAllExpList();
+  toast('✅ 已改成收入，點該筆的 ✎ 可填「報帳回收」扣除不計收入');
+}
+// 把一筆「其實是自己帳戶互轉」的紀錄排除（移出支出、記入互轉紀錄、不計收支）
+function convertExpToTransfer(id){
+  const e=db.expenses.find(x=>x.id===id);
+  if(!e){ allExpEditId=null; renderAllExpList(); return; }
+  const dEl=document.getElementById('aee-date'), aEl=document.getElementById('aee-amt');
+  const date=(dEl&&dEl.value)||e.date;
+  const amt=(aEl&&!isNaN(parseFloat(aEl.value)))?parseFloat(aEl.value):e.amount;
+  db.transfers=db.transfers||[];
+  db.transfers.push({id:Date.now()+Math.random(), date, from:null, to:null, amount:Math.abs(amt), note:(e.note||e.category||'')+'（帳戶互轉）', _reclassified:true});
+  db.expenses=db.expenses.filter(x=>x.id!==id);
+  allExpEditId=null;
+  saveData(); updateUI();
+  const months=expMonths(); if(!months.includes(allExpMonth)) allExpMonth=months[0]||'';
+  renderAllExpMonths(months); renderAllExpList();
+  toast('✅ 已改成帳戶互轉，不計收入也不計支出');
 }
 // 批次把目前檢視的月份整批改成另一個年月（保留日，只改年月）
 function bulkMoveMonth(){
