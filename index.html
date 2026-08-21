@@ -450,18 +450,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="section-title">工具 / 匯入</div>
       <div class="card card-body" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
         <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;" onclick="openSheet('cc-ocr')">
-          <i class="fa-solid fa-camera"></i> 截圖 / 台新檔案匯入
+          <i class="fa-solid fa-file-import"></i> 截圖 / 檔案匯入
         </button>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <button class="btn btn-ghost btn-sm" onclick="openSheet('ai-report')"><i class="fa-solid fa-brain"></i> AI 財務體檢</button>
           <button class="btn btn-ghost btn-sm" onclick="openSheet('transfer')"><i class="fa-solid fa-right-left"></i> 帳戶互轉</button>
-          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('csv-input').click()"><i class="fa-solid fa-file-excel"></i> 匯入記帳檔案</button>
           <button class="btn btn-ghost btn-sm" onclick="postSubs()"><i class="fa-solid fa-bolt"></i> 入帳固定支出</button>
+          <button class="btn btn-ghost btn-sm" onclick="openSheet('budget')"><i class="fa-solid fa-sliders"></i> 設定預算</button>
         </div>
         <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;line-height:1.5;">
-          截圖匯入內含台新 Richart .xls · 檔案匯入支援 CSV / Excel（需含日期、金額欄）
+          一個入口：截圖 AI 辨識 ＋ 台新 Richart / CSV / Excel 檔案匯入
         </div>
-        <input type="file" id="csv-input" hidden multiple accept=".csv,.xlsx,.xls,.numbers" onchange="handleCSV(this)">
       </div>
 
       <!-- Fixed expenses -->
@@ -824,13 +823,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
 
       <div style="text-align:center;font-size:11px;color:var(--muted,#94a3b8);margin:2px 0 10px;">— 或直接匯入檔案（更精準）—</div>
-      <div onclick="document.getElementById('richart-file').click()"
+      <div onclick="document.getElementById('import-file').click()"
         style="border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;">
-        <i class="fa-solid fa-file-excel" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
-        <div style="font-size:15px;font-weight:600;color:var(--text);">台新 Richart 檔案匯入 (.xls)</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">直接讀取交易明細，精準、不需 AI<br><span style="color:rgba(148,163,184,.6);">信用卡消費 + 帳戶收入，自動分類去重</span></div>
+        <i class="fa-solid fa-file-import" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">檔案匯入（台新 .xls / CSV / Excel）</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">自動判別台新 Richart 或一般記帳檔<br><span style="color:rgba(148,163,184,.6);">可從「檔案」App 選取（iCloud/我的 iPhone），精準、不需 AI</span></div>
       </div>
-      <input type="file" id="richart-file" hidden accept=".xls,.xlsx" onchange="handleRichartFile(this)">
+      <input type="file" id="import-file" hidden accept=".xls,.xlsx,.csv,.numbers" onchange="handleImportFile(this)">
     </div>
 
     <!-- Loading state -->
@@ -4771,6 +4770,23 @@ function parseRichartWorkbook(wb){
     }
   });
   return items;
+}
+// 統一檔案匯入入口：自動判別「台新 Richart」或「一般 CSV/Excel」
+async function handleImportFile(input){
+  const file=input.files[0];
+  if(!file) return;
+  const ext=(file.name.toLowerCase().split('.').pop())||'';
+  if(ext==='csv' || ext==='numbers'){ handleCSV(input); return; }  // 一般記帳檔
+  // xls/xlsx：偵測是否為台新 Richart（含 信用卡明細/帳戶明細，或標題含 消費明細/摘要）
+  let isRichart=false;
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
+    isRichart = wb.SheetNames.some(n=>/信用卡明細|帳戶明細/.test(n)) ||
+      wb.SheetNames.some(n=>{ const first=(XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''})[0]||[]).map(x=>String(x)).join(','); return /消費明細|摘要/.test(first) && /金額/.test(first); });
+  }catch(e){ /* 讀不出來就當一般檔 */ }
+  if(isRichart) handleRichartFile(input);  // 走台新 Richart 預覽流程
+  else handleCSV(input);                    // 走一般 CSV/Excel 匯入
 }
 async function handleRichartFile(input){
   const file=input.files[0]; input.value='';
