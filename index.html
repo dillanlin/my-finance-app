@@ -4677,24 +4677,32 @@ function renderCcResults() {
   // Sort by date desc
   ccParsedItems.sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-  const expItems = ccParsedItems.filter(it => it.kind !== 'income');
+  const expItems = ccParsedItems.filter(it => it.kind !== 'income' && it.kind !== 'transfer');
   const incItems = ccParsedItems.filter(it => it.kind === 'income');
+  const tfItems = ccParsedItems.filter(it => it.kind === 'transfer');
   const expTot = expItems.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
   const incTot = incItems.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
   const possibleDups = ccParsedItems.filter(it => it._possibleDup).length;
   summary.innerHTML = '支出 '+expItems.length+' 筆 $'+Math.round(expTot).toLocaleString()
     + (incItems.length ? ' · <span style="color:#34d399;">收入 '+incItems.length+' 筆 $'+Math.round(incTot).toLocaleString()+'</span>' : '')
+    + (tfItems.length ? ' · <span style="color:#94a3b8;">🔄 互轉 '+tfItems.length+' 筆(不計)</span>' : '')
     + (possibleDups>0 ? ' · <span style="color:#fbbf24;">⚠️ '+possibleDups+' 疑似重複</span>' : '');
 
   list.innerHTML = ccParsedItems.map((it, i) => {
     const isInc = it.kind === 'income';
+    const isTf = it.kind === 'transfer';
     const dupWarning = it._possibleDup
       ? '<div style="background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#fbbf24;">⚠️ 疑似重複（已有同日同金額紀錄），請確認是否需要匯入</div>'
       : '';
-    const borderCol = it._possibleDup ? 'rgba(251,191,36,.3)' : (isInc ? 'rgba(52,211,153,.35)' : 'rgba(255,255,255,.08)');
+    const askTf = isTf
+      ? '<div style="background:rgba(148,163,184,.12);border:1px solid rgba(148,163,184,.3);border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:11px;color:#94a3b8;">🔄 跨行轉出：預設當「帳戶互轉」不計收支。若這筆其實是支出（付房租/分帳），請點上面「支出」。</div>'
+      : '';
+    const borderCol = it._possibleDup ? 'rgba(251,191,36,.3)' : (isInc ? 'rgba(52,211,153,.35)' : isTf ? 'rgba(148,163,184,.3)' : 'rgba(255,255,255,.08)');
+    const btn = (k,label,col,bg) => `<button onclick="ccSetKind(${i},'${k}')" style="flex:1;padding:5px;border-radius:8px;border:1px solid ${it.kind===k?col:'rgba(255,255,255,.08)'};background:${it.kind===k?bg:'transparent'};color:${it.kind===k?col:'var(--muted,#94a3b8)'};font-size:12px;cursor:pointer;">${label}</button>`;
     const toggle = `<div style="display:flex;gap:4px;margin-bottom:8px;">
-      <button onclick="ccSetKind(${i},'expense')" style="flex:1;padding:5px;border-radius:8px;border:1px solid ${!isInc?'var(--red,#f87171)':'rgba(255,255,255,.08)'};background:${!isInc?'rgba(248,113,113,.15)':'transparent'};color:${!isInc?'var(--red,#f87171)':'var(--muted,#94a3b8)'};font-size:12px;cursor:pointer;">支出</button>
-      <button onclick="ccSetKind(${i},'income')" style="flex:1;padding:5px;border-radius:8px;border:1px solid ${isInc?'var(--green,#10b981)':'rgba(255,255,255,.08)'};background:${isInc?'rgba(16,185,129,.15)':'transparent'};color:${isInc?'var(--green,#10b981)':'var(--muted,#94a3b8)'};font-size:12px;cursor:pointer;">收入</button>
+      ${btn('expense','支出','var(--red,#f87171)','rgba(248,113,113,.15)')}
+      ${btn('income','收入','var(--green,#10b981)','rgba(16,185,129,.15)')}
+      ${btn('transfer','互轉','#94a3b8','rgba(148,163,184,.15)')}
     </div>`;
     const header = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;">
         <div style="flex:1;min-width:0;">
@@ -4708,7 +4716,14 @@ function renderCcResults() {
         <button onclick="ccParsedItems.splice(${i},1);renderCcResults();" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>
       </div>`;
     let body;
-    if(isInc){
+    if(isTf){
+      body = `<div style="display:grid;grid-template-columns:1fr 100px;gap:8px;align-items:center;">
+        <div style="font-size:12px;color:#94a3b8;">🔄 帳戶互轉（不計收支）</div>
+        <input type="number" value="${it.amount||0}" step="1"
+          style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:#94a3b8;font-size:14px;font-weight:600;text-align:right;"
+          onchange="ccParsedItems[${i}].amount=parseFloat(this.value)||0">
+      </div>`;
+    } else if(isInc){
       body = `<div style="display:grid;grid-template-columns:1fr 100px;gap:8px;">
         <input type="text" value="${(it.source||it.merchant||'').replace(/"/g,'&quot;')}" placeholder="收入來源（薪水…）"
           style="background:var(--bg3,#334155);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;"
@@ -4733,7 +4748,7 @@ function renderCcResults() {
         <input type="checkbox" ${it.reimb?'checked':''} onchange="ccParsedItems[${i}].reimb=this.checked" style="width:16px;height:16px;">🧾 可報帳（不計入支出）
       </label>`;
     }
-    return dupWarning + `<div style="background:var(--card,#1e293b);border:1px solid ${borderCol};border-radius:12px;padding:12px;margin-bottom:8px;">
+    return dupWarning + askTf + `<div style="background:var(--card,#1e293b);border:1px solid ${borderCol};border-radius:12px;padding:12px;margin-bottom:8px;">
       ${toggle}${header}${body}
     </div>`;
   }).join('');
@@ -4791,9 +4806,16 @@ function importCcData() {
   const keys = new Set(db.expenses.map(e => ccKey(e.date, e.amount, e.note)));
   const incKeys = new Set(db.incomes.map(i => i.date+'|'+Math.abs(i.amount)));
 
+  let tfAdded = 0;
   ccParsedItems.forEach(it => {
     const amt = parseFloat(it.amount) || 0;
     if(amt === 0 || !it.date) return;
+    if(it.kind === 'transfer'){
+      db.transfers = db.transfers || [];
+      db.transfers.push({ id: Date.now()+Math.random(), date: it.date, from: accId, to: null, amount: Math.abs(amt), note: (it.merchant||'跨行轉出')+'（帳戶互轉）', _reclassified: true });
+      tfAdded++;
+      return; // 不計收入也不計支出
+    }
     if(it.kind === 'income'){
       const k = it.date+'|'+Math.abs(amt);
       if(incKeys.has(k)) return;
@@ -4828,6 +4850,7 @@ function importCcData() {
   closeSheet('cc-ocr');
   let msg = (clearedCount>0 ? ('🧹 清除舊 '+clearedCount+' 筆 · ') : '') + '✅ 匯入支出 '+added+' 筆 $'+Math.round(totalAmt).toLocaleString();
   if(incAdded>0) msg += '、收入 '+incAdded+' 筆 $'+Math.round(totalInc).toLocaleString();
+  if(tfAdded>0) msg += '、互轉 '+tfAdded+' 筆(不計)';
   toast(msg);
   ccIsRichart = false;
 }
@@ -4892,7 +4915,9 @@ function parseRichartWorkbook(wb){
         if(/卡費|信用卡費|卡款|還款|繳款|自動扣繳.*卡/.test(sum+memo)) continue;   // 卡費/還款→跳過(避免與信用卡明細重複記帳)
         if(sum.includes('刷卡消費')){ if(amt<0){ const mn=cleanMerchant(note); items.push({kind:'expense',date:normDate(dt),merchant:mn,amount:Math.abs(amt),category:guessCategory(mn)||'其他',paymentMethod:'台新(帳戶)'}); } continue; }
         if(amt>0){ const src=richartIncomeSource(sum,memo); if(!/薪水|利息|回饋|租金|股利/.test(src)) continue; items.push({kind:'income',date:normDate(dt),merchant:src,amount:amt,source:src}); continue; }
-        // 其餘(轉帳支取/CD轉出/CD提款/ATM)→跳過
+        // 跨行轉出：可能是支出(付房租/分帳/給別人)也可能是自己帳戶互轉 → 收集起來讓使用者在預覽逐筆決定，預設排除(互轉)
+        if(amt<0 && /跨行/.test(sum+memo)){ items.push({kind:'transfer',date:normDate(dt),merchant:(cleanMerchant(note)||sum||'跨行轉出'),amount:Math.abs(amt),category:'其他',paymentMethod:'台新(帳戶)'}); continue; }
+        // 其餘(轉帳支取給自己/CD提款/ATM 提領現金)→跳過
       }
     }
   });
@@ -4968,14 +4993,16 @@ function finalizeCcItems(allItems){
   const existingInc=(db.incomes||[]).map(i=>({date:i.date,amt:Math.abs(i.amount)}));
   allItems.forEach(it=>{
     if(!it.amount||!it.date) return;
-    const amt=Math.abs(parseFloat(it.amount)); it.kind=(it.kind==='income')?'income':'expense';
+    const amt=Math.abs(parseFloat(it.amount)); it.kind=(it.kind==='income')?'income':(it.kind==='transfer')?'transfer':'expense';
     const m=ccMerchantNorm(it.merchant);
     const exactKey=it.kind+'|'+it.date+'|'+m+'|'+amt;
     if(seen.has(exactKey)) return; seen.set(exactKey,true);
     const dateObj=new Date(it.date); let dup=false;
-    for(let o=-1;o<=1&&!dup;o++){ const cd=new Date(dateObj); cd.setDate(cd.getDate()+o); const ds=cd.toISOString().split('T')[0];
-      if(it.kind==='income'){ if(existingInc.some(e=>e.amt===amt&&e.date===ds)) dup=true; }
-      else { if(existing.some(e=>e.amt===amt&&e.date===ds&&(!e.m||!m||e.m===m||e.m.includes(m)||m.includes(e.m)))) dup=true; } }
+    if(it.kind!=='transfer'){
+      for(let o=-1;o<=1&&!dup;o++){ const cd=new Date(dateObj); cd.setDate(cd.getDate()+o); const ds=cd.toISOString().split('T')[0];
+        if(it.kind==='income'){ if(existingInc.some(e=>e.amt===amt&&e.date===ds)) dup=true; }
+        else { if(existing.some(e=>e.amt===amt&&e.date===ds&&(!e.m||!m||e.m===m||e.m.includes(m)||m.includes(e.m)))) dup=true; } }
+    }
     if(dup) it._possibleDup=true;
     ccParsedItems.push(it);
   });
