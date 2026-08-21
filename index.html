@@ -823,13 +823,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
 
       <div style="text-align:center;font-size:11px;color:var(--muted,#94a3b8);margin:2px 0 10px;">— 或直接匯入檔案（更精準）—</div>
-      <div onclick="document.getElementById('import-file').click()"
+      <div onclick="document.getElementById('rec-import-file').click()"
         style="border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;">
         <i class="fa-solid fa-file-import" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
         <div style="font-size:15px;font-weight:600;color:var(--text);">檔案匯入（台新 .xls / CSV / Excel）</div>
         <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">自動判別台新 Richart 或一般記帳檔<br><span style="color:rgba(148,163,184,.6);">可從「檔案」App 選取（iCloud/我的 iPhone），精準、不需 AI</span></div>
       </div>
-      <input type="file" id="import-file" hidden accept=".xls,.xlsx,.csv,.numbers" onchange="handleImportFile(this)">
+      <input type="file" id="rec-import-file" hidden accept=".xls,.xlsx,.csv,.numbers" onchange="handleImportFile(this)">
     </div>
 
     <!-- Loading state -->
@@ -4789,27 +4789,28 @@ function parseRichartWorkbook(wb){
   });
   return items;
 }
-// 統一檔案匯入入口：自動判別「台新 Richart」或「一般 CSV/Excel」
+// 統一檔案匯入入口：自動判別「台新 Richart」或「一般 CSV/Excel」（檔案只讀取一次）
 async function handleImportFile(input){
   const file=input.files[0];
   if(!file) return;
   const ext=(file.name.toLowerCase().split('.').pop())||'';
   if(ext==='csv' || ext==='numbers'){ handleCSV(input); return; }  // 一般記帳檔
-  // xls/xlsx：偵測是否為台新 Richart（含 信用卡明細/帳戶明細，或標題含 消費明細/摘要）
+  if(!window.XLSX){ handleCSV(input); return; }
+  // 只讀取一次 arrayBuffer（iOS Safari 重複讀取同一 File 會失敗）
+  let wb=null;
+  try{ const buf=await file.arrayBuffer(); wb=XLSX.read(new Uint8Array(buf),{type:'array'}); }
+  catch(e){ wb=null; }
+  if(!wb){ handleCSV(input); return; }   // 讀不出來就當一般檔
   let isRichart=false;
   try{
-    const buf=await file.arrayBuffer();
-    const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
     isRichart = wb.SheetNames.some(n=>/信用卡明細|帳戶明細/.test(n)) ||
       wb.SheetNames.some(n=>{ const first=(XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''})[0]||[]).map(x=>String(x)).join(','); return /消費明細|摘要/.test(first) && /金額/.test(first); });
-  }catch(e){ /* 讀不出來就當一般檔 */ }
-  if(isRichart) handleRichartFile(input);  // 走台新 Richart 預覽流程
-  else handleCSV(input);                    // 走一般 CSV/Excel 匯入
+  }catch(e){}
+  if(isRichart){ input.value=''; startRichartImport(wb); }  // 用已讀好的 workbook，不再重讀檔案
+  else { handleCSV(input); }               // 一般 CSV/Excel（handleCSV 會自己讀 input.files）
 }
-async function handleRichartFile(input){
-  const file=input.files[0]; input.value='';
-  if(!file) return;
-  if(!window.XLSX){ document.getElementById('cc-error').style.display='block'; document.getElementById('cc-error').textContent='⚠️ 試算表函式庫未載入，請檢查網路後重開'; return; }
+// 以已解析的 workbook 執行台新 Richart 匯入預覽（不再讀檔）
+function startRichartImport(wb){
   ccIsRichart=true;
   document.getElementById('cc-card-name').value='台新Richart';
   selectAccountByName('cc-account',/台新|richart/i);
@@ -4819,13 +4820,11 @@ async function handleRichartFile(input){
   document.getElementById('cc-loading-text').textContent='解析台新 Richart 檔案...';
   document.getElementById('cc-progress-bar').style.width='40%';
   try{
-    const buf=await file.arrayBuffer();
-    const wb=XLSX.read(new Uint8Array(buf),{type:'array'});
     const items=parseRichartWorkbook(wb);
     if(!items.length) throw new Error('找不到可匯入的交易（請確認是 Richart 交易明細檔）');
     document.getElementById('cc-progress-bar').style.width='100%';
     _richartAllItems = items;
-    setupRichartMonthFilter();   // 建立「起始月份」選單並套用預設（近 3 個月）
+    setupRichartMonthFilter();
     applyRichartMonthFilter();
   }catch(e){
     document.getElementById('cc-loading').style.display='none';
