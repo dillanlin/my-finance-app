@@ -449,9 +449,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <!-- Actions: 工具 / 匯入（整合） -->
       <div class="section-title">工具 / 匯入</div>
       <div class="card card-body" style="margin-bottom:12px;display:flex;flex-direction:column;gap:8px;">
-        <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;" onclick="openSheet('cc-ocr')">
-          <i class="fa-solid fa-file-import"></i> 截圖 / 檔案匯入
-        </button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <button class="btn" style="background:linear-gradient(135deg,#0891b2,#0e7490);color:white;" onclick="openImport('shot')">
+            <i class="fa-solid fa-camera"></i> 匯入截圖
+          </button>
+          <button class="btn" style="background:linear-gradient(135deg,#059669,#047857);color:white;" onclick="openImport('file')">
+            <i class="fa-solid fa-file-import"></i> 匯入檔案
+          </button>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <button class="btn btn-ghost btn-sm" onclick="openSheet('ai-report')"><i class="fa-solid fa-brain"></i> AI 財務體檢</button>
           <button class="btn btn-ghost btn-sm" onclick="openSheet('transfer')"><i class="fa-solid fa-right-left"></i> 帳戶互轉</button>
@@ -788,13 +793,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="sheet-overlay" id="sheet-cc-ocr" onclick="closeSheetOnBg(event,'sheet-cc-ocr')">
   <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
     <div class="sheet-handle" style="flex-shrink:0;"></div>
-    <div class="sheet-title" style="flex-shrink:0;">📸 多筆消費截圖匯入</div>
+    <div class="sheet-title" id="cc-sheet-title" style="flex-shrink:0;">📸 多筆消費截圖匯入</div>
     <div style="font-size:13px;color:var(--muted,#94a3b8);margin-bottom:14px;line-height:1.6;flex-shrink:0;">
       支援：信用卡帳單、Line Pay 交易紀錄、通知中心。可連續上傳多張，AI 自動辨識並去除重複。
     </div>
 
     <!-- Idle state -->
     <div id="cc-idle" style="flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+      <div id="cc-mode-shot">
       <div id="cc-card-info" style="background:var(--bg3,#334155);border-radius:14px;padding:14px;margin-bottom:14px;">
         <label class="form-label">支付方式（標記在備註欄）</label>
         <input type="text" class="form-input" id="cc-card-name" placeholder="例：Line Pay、國泰 CUBE、玉山 Pi 卡">
@@ -821,8 +827,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
+      </div><!-- /cc-mode-shot -->
 
-      <div style="text-align:center;font-size:11px;color:var(--muted,#94a3b8);margin:2px 0 10px;">— 或直接匯入檔案（更精準）—</div>
+      <div id="cc-mode-file" style="display:none;">
       <label for="rec-import-file"
         style="display:block;border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;position:relative;">
         <i class="fa-solid fa-file-import" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
@@ -832,6 +839,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           accept=".xls,.xlsx,.csv,.numbers,.tsv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/vnd.apple.numbers,com.microsoft.excel.xls,org.openxmlformats.spreadsheetml.sheet,com.apple.iwork.numbers.numbers,public.comma-separated-values-text,public.data,public.item"
           style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;">
       </label>
+      </div><!-- /cc-mode-file -->
     </div>
 
     <!-- Loading state -->
@@ -4233,7 +4241,18 @@ function saveBudgets() {
 // ── Credit Card Statement OCR ─────────────────────────────
 let ccParsedItems = [];
 
+let ccImportMode = 'shot'; // 'shot' = 截圖AI辨識, 'file' = 檔案匯入
+// 依模式開啟匯入面板（截圖 / 檔案 兩個分開的按鈕）
+function openImport(mode){
+  ccImportMode = (mode==='file') ? 'file' : 'shot';
+  openSheet('cc-ocr');
+}
 function openCcOcrSheet() {
+  // 依 ccImportMode 顯示對應區塊 + 標題
+  const isFile = (ccImportMode==='file');
+  const shotEl = document.getElementById('cc-mode-shot'); if(shotEl) shotEl.style.display = isFile ? 'none' : 'block';
+  const fileEl = document.getElementById('cc-mode-file'); if(fileEl) fileEl.style.display = isFile ? 'block' : 'none';
+  const titleEl = document.getElementById('cc-sheet-title'); if(titleEl) titleEl.textContent = isFile ? '📥 匯入檔案（台新 .xls / CSV / Excel / Numbers）' : '📸 匯入截圖（AI 自動判讀）';
   // Populate accounts
   const sel = document.getElementById('cc-account');
   if(sel) sel.innerHTML = db.assets.map(a => `<option value="${a.id}">${a.name}${a.isDelivery?' ★':''}</option>`).join('');
