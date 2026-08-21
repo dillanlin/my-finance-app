@@ -823,13 +823,15 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <input type="file" id="cc-file" hidden multiple accept="image/*" onchange="handleCcUpload(this)">
 
       <div style="text-align:center;font-size:11px;color:var(--muted,#94a3b8);margin:2px 0 10px;">— 或直接匯入檔案（更精準）—</div>
-      <div onclick="document.getElementById('rec-import-file').click()"
-        style="border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;">
+      <label for="rec-import-file"
+        style="display:block;border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;position:relative;">
         <i class="fa-solid fa-file-import" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
-        <div style="font-size:15px;font-weight:600;color:var(--text);">檔案匯入（台新 .xls / CSV / Excel）</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);">檔案匯入（台新 .xls / CSV / Excel / Numbers）</div>
         <div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;">自動判別台新 Richart 或一般記帳檔<br><span style="color:rgba(148,163,184,.6);">可從「檔案」App 選取（iCloud/我的 iPhone），精準、不需 AI</span></div>
-      </div>
-      <input type="file" id="rec-import-file" hidden onchange="handleImportFile(this)">
+        <input type="file" id="rec-import-file" onchange="handleImportFile(this)"
+          accept=".xls,.xlsx,.csv,.numbers,.tsv,.txt,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain,application/vnd.apple.numbers,com.microsoft.excel.xls,org.openxmlformats.spreadsheetml.sheet,com.apple.iwork.numbers.numbers,public.comma-separated-values-text,public.data,public.item"
+          style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;">
+      </label>
     </div>
 
     <!-- Loading state -->
@@ -4834,7 +4836,7 @@ async function handleImportFile(input){
   const load=document.getElementById('cc-loading'); if(load) load.style.display='block';
   const lt=document.getElementById('cc-loading-text'); if(lt) lt.textContent='讀取檔案：'+file.name+'（'+Math.round(file.size/1024)+' KB）';
   const bar=document.getElementById('cc-progress-bar'); if(bar) bar.style.width='20%';
-  if(ext==='csv' || ext==='numbers'){ if(load) load.style.display='none'; if(idle) idle.style.display='block'; handleCSV(input); return; }
+  if(ext==='csv'){ if(load) load.style.display='none'; if(idle) idle.style.display='block'; handleCSV(input); return; }
   if(!window.XLSX){ showImportError('試算表函式庫未載入，請確認有網路後關掉 App 重開'); input.value=''; return; }
   // 只讀取一次 arrayBuffer（iOS Safari 重複讀同一 File 會失敗）
   let wb=null, readErr='';
