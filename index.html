@@ -549,6 +549,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <span style="font-size:15px;">還原備份</span>
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()"><i class="fa-solid fa-upload"></i> 上傳</button>
         </div>
+        <div class="sub-item">
+          <span style="font-size:15px;">清除所有記帳明細<br><span style="font-size:11px;color:var(--muted);">保留存股、帳戶、財務規劃、設定</span></span>
+          <button class="btn btn-sm" style="background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.3);" onclick="clearRecords()">清除記帳</button>
+        </div>
         <div class="sub-item" style="border-bottom:none;">
           <span style="font-size:15px;">清除所有資料</span>
           <button class="btn btn-sm" style="background:rgba(248,113,113,.15);color:var(--red);border:1px solid rgba(248,113,113,.3);" onclick="clearAll()">清除</button>
@@ -3276,6 +3280,14 @@ function importData(el){
   r.readAsText(el.files[0]);
 }
 function clearAll(){if(confirm('確定清除所有資料？')){localStorage.clear();location.reload();}}
+// 只清除記帳明細（支出/收入/互轉），保留存股、帳戶、財務規劃、設定
+function clearRecords(){
+  const n=(db.expenses||[]).length+(db.incomes||[]).length;
+  if(!confirm('確定清除全部記帳明細嗎？\n\n將刪除 '+(db.expenses||[]).length+' 筆支出、'+(db.incomes||[]).length+' 筆收入、'+(db.transfers||[]).length+' 筆互轉。\n\n✅ 會保留：存股、帳戶餘額、財務規劃參數、API 設定\n\n建議先「下載備份」再清除。')) return;
+  db.expenses=[]; db.incomes=[]; db.transfers=[];
+  saveData(); updateUI();
+  toast('✅ 已清除 '+n+' 筆記帳明細，可重新匯入');
+}
 
 // ── Utils ─────────────────────────────────────────────────
 function fmt(n){
@@ -4592,8 +4604,8 @@ async function callGeminiCcOcr(base64, mediaType, cardName, fileName, ym) {
 
 【每筆先判斷 kind】
 - kind="expense"（支出）：負號金額的消費（刷卡、Line Pay）。
-- kind="income"（收入）：正數且是「真正收入」——薪資轉帳（名稱像公司/代發薪，如 APPLIEDMATERIALS、花旗代發、台積電）、獎金、利息、股利、退費入帳；income 要填 source（薪水/獎金/利息/股利/其他）。
-- 跳過不要輸出：ATM 存提款/自我轉帳/跨行（如「ATM013-...」）、信用卡費/台新卡費/還款（會與個別刷卡重複）、以及任何無法判斷用途的正數。
+- kind="income"（收入）：正數且是「真正收入」——薪資轉帳（名稱像公司/代發薪，如 APPLIEDMATERIALS、花旗代發、台積電）、出差津貼（也常顯示 APPLIEDMATERIALS，一樣算 source="薪水"）、政府補助/租金補助（固定小額如 2,640，source="租金"）、獎金、銀行利息、信用卡回饋、股利、退費入帳；income 要填 source（薪水/租金/利息/回饋/股利/獎金/其他）。
+- 跳過不要輸出：ATM 存提款/自我轉帳/跨行/約定轉帳/國泰交割/證券買賣入扣款（如「ATM013-...」）、信用卡費/台新卡費/還款/繳款（會與個別刷卡重複）、Line Pay/悠遊付/一卡通「儲值加值」（會與實際消費重複）、以及任何無法判斷用途的正數。
 
 【判讀規則】
 1. 日期：只有「DD日」時，用畫面上的月份標題補月份；都看不到就用「今年的這個月」，若那天比今天晚則算上個月。輸出 YYYY-MM-DD。
@@ -4849,7 +4861,7 @@ function cleanMerchant(s){ s=String(s||'').trim();
   s=s.replace(/^(優步|優食|優食台灣股份有限公司)[－\-]?/,'').replace(/^商線[－\-]/,'');
   return s.trim()||String(s); }
 function mapRichartCat(c){ c=String(c||'').trim(); return RICHART_CAT[c]||'其他'; }
-function richartIncomeSource(sum,note){ const t=String(sum)+String(note); if(/APPLIED|花旗|薪/.test(t)) return '薪水'; if(/息/.test(t)) return '利息'; if(/回饋/.test(t)) return '回饋'; if(/租/.test(t)) return '租金'; return String(sum||'收入'); }
+function richartIncomeSource(sum,note){ const t=String(sum)+String(note); if(/APPLIED|花旗|薪|津貼/.test(t)) return '薪水'; if(/股利|股息|配息/.test(t)) return '股利'; if(/息/.test(t)) return '利息'; if(/回饋/.test(t)) return '回饋'; if(/租|補助|政府/.test(t)) return '租金'; return String(sum||'收入'); }
 function selectAccountByName(selId,re){ const sel=document.getElementById(selId); if(!sel) return; for(const opt of sel.options){ if(re.test(opt.textContent)){ sel.value=opt.value; return; } } }
 
 function parseRichartWorkbook(wb){
@@ -4870,15 +4882,16 @@ function parseRichartWorkbook(wb){
       }
     } else if(head.includes('摘要')){
       // 帳戶明細 → 刷卡消費(支出) + 薪資/利息/回饋/租金(收入)；跳過轉帳/ATM/卡費
-      const cD=col('交易日期'), cA=col('金額'), cS=col('摘要'), cN=col('備註'), cB=col('帳戶餘額'), cT=col('轉帳說明');
+      const cD=col('交易日期'), cA=col('金額'), cS=col('摘要'), cN=col('備註'), cB=col('帳戶餘額'), cT=col('轉帳說明'), cMemo=col('備忘錄');
       for(let r=1;r<rows.length;r++){ const row=rows[r]; if(!row) continue;
         const dt=String(row[cD]||'').trim(), amt=parseTwMoney(row[cA]), sum=String(row[cS]||'').trim(), note=String(row[cN]||'').trim();
-        const memo = note + ' ' + (cT>=0?String(row[cT]||''):'');
+        // 台新「摘要」多是「轉帳存入/媒體轉帳」等通用字，真正身份在備註/備忘錄/轉帳說明（如「八月租屋補助」在備忘錄）
+        const memo = note + ' ' + (cMemo>=0?String(row[cMemo]||''):'') + ' ' + (cT>=0?String(row[cT]||''):'');
         if(_richartBalance==null && cB>=0){ const b=parseTwMoney(row[cB]); if(b) _richartBalance=b; } // 最新一列的帳戶餘額
         if(!dt||!amt) continue;
-        if(/卡費/.test(sum+memo)) continue;                    // 台新卡費(繳卡費)→跳過(避免與信用卡明細重複)
+        if(/卡費|信用卡費|卡款|還款|繳款|自動扣繳.*卡/.test(sum+memo)) continue;   // 卡費/還款→跳過(避免與信用卡明細重複記帳)
         if(sum.includes('刷卡消費')){ if(amt<0){ const mn=cleanMerchant(note); items.push({kind:'expense',date:normDate(dt),merchant:mn,amount:Math.abs(amt),category:guessCategory(mn)||'其他',paymentMethod:'台新(帳戶)'}); } continue; }
-        if(amt>0){ const src=richartIncomeSource(sum,memo); if(!/薪水|利息|回饋|租金/.test(src)) continue; items.push({kind:'income',date:normDate(dt),merchant:src,amount:amt,source:src}); continue; }
+        if(amt>0){ const src=richartIncomeSource(sum,memo); if(!/薪水|利息|回饋|租金|股利/.test(src)) continue; items.push({kind:'income',date:normDate(dt),merchant:src,amount:amt,source:src}); continue; }
         // 其餘(轉帳支取/CD轉出/CD提款/ATM)→跳過
       }
     }
