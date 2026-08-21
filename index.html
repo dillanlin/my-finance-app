@@ -3095,6 +3095,34 @@ async function handleCSV(input){
   input.value = '';
 }
 
+// 用已解析的 workbook 匯入一般記帳檔（避免重複讀檔）
+function importWorkbookGeneric(wb, fileName){
+  let allTrans=[], totalCells=0;
+  wb.SheetNames.forEach(n=>{
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,dateNF:'yyyy-mm-dd'});
+    rows.forEach(r=>{ if(r) r.forEach(c=>{ if(c!=null&&c!=='') totalCells++; }); });
+    const parsed=parseRows(rows,n);
+    if(parsed.length) allTrans=allTrans.concat(parsed);
+  });
+  if(!allTrans.length){
+    alert('⚠️ '+(fileName||'檔案')+'：找到資料但無法辨識格式\n\n表格內需含「日期」與「金額」欄位（標題列含這些字），類別欄可選。');
+    return;
+  }
+  let added=0, dup=0; const newCats=new Set();
+  const keys=new Set(db.expenses.map(expenseKey));
+  const defaultAcc=db.assets.find(a=>!a.isDelivery)||db.assets[0];
+  allTrans.forEach(t=>{
+    const k=expenseKey(t);
+    if(!keys.has(k)){ db.expenses.push(t); keys.add(k); added++; if(defaultAcc) defaultAcc.balance-=t.amount;
+      const tr=String(t.category||'').trim(); if(tr && !DEFAULT_CATS.includes(tr) && !db.customCats.includes(tr)){ db.customCats.push(tr); newCats.add(tr); }
+    } else dup++;
+  });
+  saveData(); updateUI();
+  let msg='✅ 匯入 '+added+' 筆'+(dup>0?'（跳過 '+dup+' 筆重複）':'');
+  if(newCats.size>0) msg+='\n新增類別：'+[...newCats].join('、');
+  toast(msg);
+}
+
 function parseRows(rows, sheetName){
   if(!rows || !rows.length) return [];
   let colMap = {date:-1, amount:-1, category:-1, note:-1};
@@ -4789,26 +4817,41 @@ function parseRichartWorkbook(wb){
   });
   return items;
 }
+function showImportError(msg){
+  const l=document.getElementById('cc-loading'); if(l) l.style.display='none';
+  const idle=document.getElementById('cc-idle'); if(idle) idle.style.display='block';
+  const e=document.getElementById('cc-error'); if(e){ e.style.display='block'; e.textContent='❌ '+msg; }
+}
 // 統一檔案匯入入口：自動判別「台新 Richart」或「一般 CSV/Excel」（檔案只讀取一次）
 async function handleImportFile(input){
   const file=input.files[0];
-  if(!file) return;
+  if(!file){ toast('未選到檔案'); return; }
   const ext=(file.name.toLowerCase().split('.').pop())||'';
-  if(!['xls','xlsx','csv','numbers'].includes(ext)){ input.value=''; toast('請選擇 .xls / .xlsx / .csv 檔'); return; }
-  if(ext==='csv' || ext==='numbers'){ handleCSV(input); return; }  // 一般記帳檔
-  if(!window.XLSX){ handleCSV(input); return; }
-  // 只讀取一次 arrayBuffer（iOS Safari 重複讀取同一 File 會失敗）
-  let wb=null;
-  try{ const buf=await file.arrayBuffer(); wb=XLSX.read(new Uint8Array(buf),{type:'array'}); }
-  catch(e){ wb=null; }
-  if(!wb){ handleCSV(input); return; }   // 讀不出來就當一般檔
+  if(!['xls','xlsx','csv','numbers'].includes(ext)){ input.value=''; toast('請選擇 .xls / .xlsx / .csv 檔（目前選到 .'+ext+'）'); return; }
+  // 立即回饋：sheet 顯示讀取中（確認有讀到檔）
+  const idle=document.getElementById('cc-idle'); if(idle) idle.style.display='none';
+  const err=document.getElementById('cc-error'); if(err) err.style.display='none';
+  const load=document.getElementById('cc-loading'); if(load) load.style.display='block';
+  const lt=document.getElementById('cc-loading-text'); if(lt) lt.textContent='讀取檔案：'+file.name+'（'+Math.round(file.size/1024)+' KB）';
+  const bar=document.getElementById('cc-progress-bar'); if(bar) bar.style.width='20%';
+  if(ext==='csv' || ext==='numbers'){ if(load) load.style.display='none'; if(idle) idle.style.display='block'; handleCSV(input); return; }
+  if(!window.XLSX){ showImportError('試算表函式庫未載入，請確認有網路後關掉 App 重開'); input.value=''; return; }
+  // 只讀取一次 arrayBuffer（iOS Safari 重複讀同一 File 會失敗）
+  let wb=null, readErr='';
+  try{
+    const buf=await file.arrayBuffer();
+    if(!buf || buf.byteLength===0){ readErr='檔案是空的（多半是還沒從 iCloud 下載完成）。請先到「檔案」App 點一下這個檔把它下載到手機，再回來匯入。'; }
+    else{ wb=XLSX.read(new Uint8Array(buf),{type:'array'}); }
+  }catch(e){ readErr='讀取失敗：'+e.message; }
+  if(!wb){ showImportError(readErr||'無法讀取檔案內容'); input.value=''; return; }
   let isRichart=false;
   try{
     isRichart = wb.SheetNames.some(n=>/信用卡明細|帳戶明細/.test(n)) ||
       wb.SheetNames.some(n=>{ const first=(XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''})[0]||[]).map(x=>String(x)).join(','); return /消費明細|摘要/.test(first) && /金額/.test(first); });
   }catch(e){}
-  if(isRichart){ input.value=''; startRichartImport(wb); }  // 用已讀好的 workbook，不再重讀檔案
-  else { handleCSV(input); }               // 一般 CSV/Excel（handleCSV 會自己讀 input.files）
+  input.value='';
+  if(isRichart){ startRichartImport(wb); }  // 用已讀好的 workbook，不再重讀
+  else { if(load) load.style.display='none'; if(idle) idle.style.display='block'; importWorkbookGeneric(wb, file.name); }  // 一般 Excel（用同一份 wb，不重讀）
 }
 // 以已解析的 workbook 執行台新 Richart 匯入預覽（不再讀檔）
 function startRichartImport(wb){
