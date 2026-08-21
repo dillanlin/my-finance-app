@@ -2283,15 +2283,21 @@ function allExpFiltered(){
   return allExpCatFilter ? monthItems.filter(e=>e.category===allExpCatFilter) : monthItems;
 }
 function selectAllExp(){
-  const items=allExpFiltered();
-  const allSel=items.length>0 && items.every(e=>allExpSelected.has(e.id));
-  items.forEach(e=>{ if(allSel) allExpSelected.delete(e.id); else allExpSelected.add(e.id); });
+  let selectable=allExpFiltered().slice();
+  if(!allExpCatFilter){  // 收入僅在「全部」分類時顯示，一併納入
+    selectable = selectable.concat((db.incomes||[]).filter(i=>i.amount>0 && i.date && String(i.date).slice(0,7)===allExpMonth));
+  }
+  const allSel=selectable.length>0 && selectable.every(x=>allExpSelected.has(x.id));
+  selectable.forEach(x=>{ if(allSel) allExpSelected.delete(x.id); else allExpSelected.add(x.id); });
   renderAllExpList();
 }
 function bulkDeleteSelected(){
   if(!allExpSelected.size) return toast('請先選取項目');
   if(!confirm('確定刪除選取的 '+allExpSelected.size+' 筆明細？')) return;
   const n=allExpSelected.size;
+  // 收入：刪除並把金額扣回對應帳戶餘額
+  (db.incomes||[]).forEach(i=>{ if(allExpSelected.has(i.id)){ const acc=db.assets.find(a=>a.id===i.targetId); if(acc) acc.balance-=i.amount; } });
+  db.incomes=(db.incomes||[]).filter(i=>!allExpSelected.has(i.id));
   db.expenses=db.expenses.filter(e=>!allExpSelected.has(e.id));
   saveData(); updateUI(); allExpSelected.clear(); renderAllExpList();
   toast('🗑 已刪除 '+n+' 筆');
@@ -2406,8 +2412,20 @@ function renderAllExpList(){
           +'</div>';
           return;
         }
-        const editBtn=(allExpSelectMode?'':'<button onclick="editAllInc('+i.id+')" style="background:rgba(52,211,153,.15);border:none;color:#34d399;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✎</button>');
-        const delBtn=(allExpSelectMode?'':'<button onclick="deleteIncomeInSheet('+i.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>');
+        if(allExpSelectMode){
+          const checked=allExpSelected.has(i.id);
+          const pure=(real<=0 && rp>0);
+          const lbl=pure?(i.source||'報帳回收'):(i.source||'收入');
+          const val=pure?rp:real; const col=pure?'#94a3b8':'#34d399';
+          html+='<div class="list-row" style="padding:10px 4px;cursor:pointer;background:'+(checked?'rgba(59,130,246,.12)':'transparent')+';" onclick="toggleExpSel('+i.id+')">'
+            +'<div style="width:34px;display:flex;align-items:center;justify-content:center;"><input type="checkbox" '+(checked?'checked':'')+' style="width:18px;height:18px;pointer-events:none;"></div>'
+            +'<div class="list-main"><div class="list-title" style="font-size:14px;">'+lbl+'</div><div class="list-sub" style="color:'+col+';">'+(pure?'報帳回收':'收入')+'</div></div>'
+            +'<div class="list-right"><div class="list-value" style="color:'+col+';font-size:14px;">+$'+Math.round(val).toLocaleString()+'</div></div>'
+          +'</div>';
+          return;
+        }
+        const editBtn='<button onclick="editAllInc('+i.id+')" style="background:rgba(52,211,153,.15);border:none;color:#34d399;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✎</button>';
+        const delBtn='<button onclick="deleteIncomeInSheet('+i.id+')" style="background:rgba(248,113,113,.15);border:none;color:var(--red,#f87171);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:12px;flex-shrink:0;">✕</button>';
         if(real<=0 && rp>0){
           // 純報帳回收（不計收入）
           html+='<div class="list-row" style="padding:10px 4px;">'
@@ -4715,8 +4733,8 @@ function setupRichartMonthFilter(){
   const sel=document.getElementById('richart-month'); if(!sel) return;
   const months=[...new Set(_richartAllItems.map(it=>String(it.date||'').slice(0,7)).filter(m=>/^\d{4}-\d{2}$/.test(m)))].sort().reverse();
   if(!months.length){ document.getElementById('richart-month-row').style.display='none'; return; }
-  // 預設起始月份 = 由新到舊的第 3 個（約近 3 個月），資料不足則全部
-  const def = months[Math.min(2, months.length-1)];
+  // 預設起始月份 = 最新月（只匯入最近一個月，避免又匯到很舊的月份）
+  const def = months[0];
   sel.innerHTML = months.map(m=>'<option value="'+m+'"'+(m===def?' selected':'')+'>'+m+' 起（含）</option>').join('')
     + '<option value="">全部（不限）</option>';
   document.getElementById('richart-month-row').style.display='flex';
