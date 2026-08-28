@@ -3601,16 +3601,19 @@ async function runAiReport() {
   const _pp = db.planParams || {};
   const targetInvest = Math.round((parseFloat(_pp.monthlyInvest)||0) + (parseFloat(_pp.esppMonthly)||0) + (parseFloat(_pp.etfMonthly)||0));
   const idleDeployable = Math.round(thisSavings - (investThisMonth != null ? investThisMonth : 0)); // 本月存下但尚未投入
-  const investGap = (targetInvest>0 && investThisMonth!=null) ? (targetInvest - investThisMonth) : null;
+  const affordableNow = Math.max(0, idleDeployable);           // 本月「實際」還能投入的錢(以真實儲蓄為上限)
+  const savingsCap = Math.max(0, Math.round(thisSavings));     // 沒有已投入數字時，實際可投入上限＝本月儲蓄
   const investLines = '目前總持股成本：$'+curStockCost.toLocaleString()+'\n'
     + (prevStockCost != null
-        ? ('上次快照（'+prevSnap.ym+'）持股成本：$'+prevStockCost.toLocaleString()+'\n本月新投入股票（成本增加）：$'+Math.round(investThisMonth).toLocaleString()+'\n')
-        : '（尚無上月快照可比對，本月上傳截圖後、下個月起即可自動計算新投入）\n')
+        ? ('上次快照（'+prevSnap.ym+'）持股成本：$'+prevStockCost.toLocaleString()+'\n本月新投入股票（實際成本增加）：$'+Math.round(investThisMonth).toLocaleString()+'\n')
+        : '（尚無上月快照可比對，本月上傳截圖後、下個月起即可自動計算實際新投入）\n')
+    + '本月實際儲蓄（收入−支出）：$'+Math.round(thisSavings).toLocaleString()+'\n'
+    + (investThisMonth != null
+        ? ('本月已投入股票：$'+Math.round(investThisMonth).toLocaleString()+'　→　本月「實際」還可投入（儲蓄−已投入，≥0）：$'+affordableNow.toLocaleString()+'\n')
+        : ('本月「實際」最多可投入（＝本月儲蓄）：$'+savingsCap.toLocaleString()+'\n'))
     + (targetInvest>0
-        ? ('每月投入目標：$'+targetInvest.toLocaleString()+(investGap!=null?('，本月'+(investGap>0?('還差 $'+Math.round(investGap).toLocaleString()):('已超標 $'+Math.round(-investGap).toLocaleString()))):'')+'\n')
-        : '（尚未在財務規劃參數設定每月投入目標）\n')
-    + '本月儲蓄：$'+Math.round(thisSavings).toLocaleString()
-    + (investThisMonth!=null?('，其中已投入股票 $'+Math.round(investThisMonth).toLocaleString()+'，尚有 $'+idleDeployable.toLocaleString()+' 留在現金可再投入'):'')+'\n';
+        ? ('理想投入目標（財務規劃參數，僅供參考，非實際收入能力）：$'+targetInvest.toLocaleString()+'\n')
+        : '（未設定理想投入目標）\n');
 
   // Personal profile
   const profileSummary = buildProfileSummary();
@@ -3654,14 +3657,14 @@ async function runAiReport() {
     + '【報告格式】每段 3-5 句精簡有力，用 emoji 開頭。必須完成全部 9 段：\n\n'
     + '💼 1. 整體健檢\n'
     + '💰 2. 收支分析（含儲蓄率與上月比）\n'
-    + '💸 3. 本月投入檢視：用【本月投入分析】的數字，明確說出「本月新投入股票 $X」「vs 每月投入目標的缺口/超標 $Y」「本月儲蓄還有 $Z 可再投入」，並給一句「本月建議再投入 $? 到國泰交割戶買股」的具體結論（若尚無上月快照可比對，就說明從下月起可追蹤，並用儲蓄與目標估算建議投入額）\n'
+    + '💸 3. 本月投入檢視（重要：以「實際」數字為準）：說出「本月新投入股票 $X」與「本月實際儲蓄 $S」。建議投入額**必須以「本月實際還可投入」金額為上限**（也就是本月真實儲蓄扣掉已投入），絕對不可假設用戶會投入到「理想投入目標」——理想目標只是遠期參考，不是本月收入能力。給一句「本月建議再投入 $?（不超過實際可投入額）到國泰交割戶買股」的具體結論；若實際可投入為 0 或偏低，就誠實說明本月現金流吃緊、勿勉強加碼。理想目標僅可作為「若要達標還差多少」的一句提醒\n'
     + '📈 4. 投資組合（股債比、集中度）\n'
     + '💵 5. 預算建議（給具體數字：餐費/交通/住房/購物/娛樂/訂閱/醫療/雜費）\n'
     + '🎯 6. 三個量化行動建議\n'
     + '🔥 7. FIRE 推估年數 + 加速建議\n'
     + '📊 8. 股市快報（針對用戶持股 0050/006208/2330 給持有/加碼/減碼建議。聲明非即時行情）\n'
     + '⚠️ 9. 風險提醒（緊急金、集中度）\n\n'
-    + '【鐵則】1)全程繁體中文禁英文 2)9 段都要寫完 3)建議量化 4)連結用戶實際狀況。直接從第 1 段開始，不要寫前言。';
+    + '【鐵則】1)全程繁體中文禁英文 2)9 段都要寫完 3)建議量化 4)連結用戶實際狀況 5)財務規劃參數(每月投入/ESPP/ETF/理想配置)都是「理想值」，任何建議金額一律以本月「實際」收支與儲蓄為準，不可假設用戶有能力投入到理想目標。直接從第 1 段開始，不要寫前言。';
 
   // Show loading
   document.getElementById('ai-report-idle').style.display = 'none';
