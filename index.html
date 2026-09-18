@@ -550,6 +550,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()"><i class="fa-solid fa-upload"></i> 上傳</button>
         </div>
         <div class="sub-item">
+          <span style="font-size:15px;">⏪ 還原到上次匯入前<br><span style="font-size:11px;color:var(--muted);">每次匯入/清除前會自動存還原點</span></span>
+          <button class="btn btn-sm" style="background:rgba(59,130,246,.15);color:var(--blue,#3b82f6);border:1px solid rgba(59,130,246,.3);" onclick="restoreUndoPoint()">還原</button>
+        </div>
+        <div class="sub-item">
           <span style="font-size:15px;">清除所有記帳明細<br><span style="font-size:11px;color:var(--muted);">保留存股、帳戶、財務規劃、設定</span></span>
           <button class="btn btn-sm" style="background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.3);" onclick="clearRecords()">清除記帳</button>
         </div>
@@ -868,7 +872,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
       <div id="cc-result-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:4px;padding-bottom:8px;"></div>
       <label id="cc-clear-old" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted,#94a3b8);margin-top:8px;flex-shrink:0;cursor:pointer;">
-        <input type="checkbox" id="cc-clear-check" checked style="width:16px;height:16px;"> 匯入前先清除舊台新明細（信用卡 / LinePay 來源），避免重複
+        <input type="checkbox" id="cc-clear-check" style="width:16px;height:16px;"> <span>⚠️ 匯入前先清除<b>所有</b>舊台新明細（會刪掉之前月份，通常不需要——已自動去重複）</span>
       </label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.08);flex-shrink:0;">
         <button class="btn btn-ghost" onclick="closeSheet('cc-ocr')">取消</button>
@@ -3281,10 +3285,33 @@ function importData(el){
   r.readAsText(el.files[0]);
 }
 function clearAll(){if(confirm('確定清除所有資料？')){localStorage.clear();location.reload();}}
+// ── 匯入還原點（一鍵回到上次匯入前）──────────────────────
+function saveUndoPoint(label){
+  try{
+    const snap={ label:label||'操作前', at:new Date().toISOString(), db:JSON.parse(JSON.stringify(db)) };
+    localStorage.setItem('financeUndoPoint', JSON.stringify(snap));
+  }catch(e){ console.warn('saveUndoPoint failed', e); }
+}
+function restoreUndoPoint(){
+  let snap;
+  try{ snap=JSON.parse(localStorage.getItem('financeUndoPoint')||'null'); }catch(e){ snap=null; }
+  if(!snap || !snap.db){ toast('⚠️ 沒有可還原的匯入前紀錄'); return; }
+  const when=new Date(snap.at); const t=isNaN(when)?'':(when.getFullYear()+'/'+(when.getMonth()+1)+'/'+when.getDate()+' '+String(when.getHours()).padStart(2,'0')+':'+String(when.getMinutes()).padStart(2,'0'));
+  const ec=(snap.db.expenses||[]).length, ic=(snap.db.incomes||[]).length;
+  if(!confirm('要還原到「'+(snap.label||'匯入前')+'」的狀態嗎？\n\n時間：'+t+'\n那時有 '+ec+' 筆支出、'+ic+' 筆收入。\n\n⚠️ 目前的資料會被那份還原點覆蓋（此動作也會先幫你存一個新的還原點，可再還原回來）。')) return;
+  // 還原前，把「現在」也存成還原點，允許來回切換
+  const cur={ label:'還原前', at:new Date().toISOString(), db:JSON.parse(JSON.stringify(db)) };
+  db=snap.db;
+  saveData();
+  try{ localStorage.setItem('financeUndoPoint', JSON.stringify(cur)); }catch(e){}
+  toast('✅ 已還原到匯入前（'+ec+' 筆支出、'+ic+' 筆收入）');
+  setTimeout(()=>location.reload(), 600);
+}
 // 只清除記帳明細（支出/收入/互轉），保留存股、帳戶、財務規劃、設定
 function clearRecords(){
   const n=(db.expenses||[]).length+(db.incomes||[]).length;
   if(!confirm('確定清除全部記帳明細嗎？\n\n將刪除 '+(db.expenses||[]).length+' 筆支出、'+(db.incomes||[]).length+' 筆收入、'+(db.transfers||[]).length+' 筆互轉。\n\n✅ 會保留：存股、帳戶餘額、財務規劃參數、API 設定\n\n建議先「下載備份」再清除。')) return;
+  saveUndoPoint('清除記帳明細前');
   db.expenses=[]; db.incomes=[]; db.transfers=[];
   saveData(); updateUI();
   toast('✅ 已清除 '+n+' 筆記帳明細，可重新匯入');
@@ -4814,6 +4841,9 @@ function importCcData() {
     return;
   }
   const cardName = document.getElementById('cc-card-name').value.trim() || '信用卡';
+
+  // 匯入前自動存一份「還原點」，可一鍵回到匯入前（防止清除/覆蓋造成資料流失）
+  saveUndoPoint('匯入台新明細前');
 
   // 台新 Richart 匯入：可先清除舊台新來源明細，避免重複
   let clearedCount = 0;
