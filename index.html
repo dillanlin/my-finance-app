@@ -462,6 +462,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <button class="btn btn-ghost btn-sm" onclick="openSheet('transfer')"><i class="fa-solid fa-right-left"></i> 帳戶互轉</button>
           <button class="btn btn-ghost btn-sm" onclick="postSubs()"><i class="fa-solid fa-bolt"></i> 入帳固定支出</button>
           <button class="btn btn-ghost btn-sm" onclick="openSheet('budget')"><i class="fa-solid fa-sliders"></i> 設定預算</button>
+          <button class="btn btn-ghost btn-sm" style="grid-column:1/3;" onclick="openSheet('car')"><i class="fa-solid fa-car"></i> 🚗 購車試算 / 車貸</button>
         </div>
         <div style="font-size:11px;color:var(--muted,#94a3b8);text-align:center;line-height:1.5;">
           一個入口：截圖 AI 辨識 ＋ 台新 Richart / CSV / Excel 檔案匯入
@@ -1044,6 +1045,47 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- 購車試算 / 車貸 -->
+<div class="sheet-overlay" id="sheet-car" onclick="closeSheetOnBg(event,'sheet-car')">
+  <div class="sheet" style="max-height:92vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="sheet-handle" style="flex-shrink:0;"></div>
+    <div class="sheet-title" style="flex-shrink:0;">🚗 購車試算 / 車貸</div>
+    <div style="flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:2px;">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">車價</label><input type="number" class="form-input" id="car-price" value="1000000" oninput="carCalc()"></div>
+        <div class="form-group"><label class="form-label">自備現金（頭期）</label><input type="number" class="form-input" id="car-down" value="0" oninput="carCalc()"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">年利率 %</label><input type="number" class="form-input" id="car-rate" value="2.9" step="0.1" oninput="carCalc()"></div>
+        <div class="form-group"><label class="form-label">貸款年限</label>
+          <select class="form-select" id="car-years" onchange="carCalc()">
+            <option value="3">3 年</option><option value="5">5 年</option><option value="7" selected>7 年</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">每月持有成本（稅/險/油/保養，估）</label><input type="number" class="form-input" id="car-hold" value="4000" oninput="carCalc()"></div>
+
+      <div id="car-out" style="margin:4px 0 12px;"></div>
+
+      <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:12px;">
+        <div class="form-label" style="margin-bottom:6px;">💰 高股息「配息繳車貸」試算</div>
+        <div class="form-group"><label class="form-label">高股息殖利率 %（如 0056 約 5.5）</label><input type="number" class="form-input" id="car-yield" value="5.5" step="0.1" oninput="carCalc()"></div>
+        <div id="car-div-out" style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.7;"></div>
+      </div>
+
+      <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:12px;margin-top:12px;">
+        <div class="form-label" style="margin-bottom:6px;">🐷 購車基金（要存多久）</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">目前已存</label><input type="number" class="form-input" id="car-saved" value="0" oninput="carCalc()"></div>
+          <div class="form-group"><label class="form-label">每月可存</label><input type="number" class="form-input" id="car-save" value="15000" oninput="carCalc()"></div>
+        </div>
+        <div id="car-fund-out" style="font-size:13px;color:var(--muted,#94a3b8);line-height:1.7;"></div>
+      </div>
+    </div>
+    <button class="btn btn-primary" style="flex-shrink:0;margin-top:10px;" onclick="saveCarPlan()"><i class="fa-solid fa-floppy-disk"></i> 儲存這組設定</button>
+  </div>
+</div>
+
 <!-- Calendar add -->
 <div class="sheet-overlay" id="sheet-calendar" onclick="closeSheetOnBg(event,'sheet-calendar')">
   <div class="sheet">
@@ -1420,6 +1462,7 @@ function openSheet(name) {
   if(name==='cc-ocr') { openCcOcrSheet(); }
   if(name==='all-exp') { openAllExpSheet(); }
   if(name==='transfer') { openTransferSheet(); }
+  if(name==='car') { openCarSheet(); }
   if(name==='expense') { const r=document.getElementById('exp-reimb'); if(r) r.checked=false; }
   if(name==='income') { const r=document.getElementById('inc-reimb-amt'); if(r) r.value=''; }
   populateSheetSelects(name);
@@ -1961,6 +2004,80 @@ function openAccountSheet(id=null){
     document.getElementById('acc-sheet-title').textContent='新增帳戶';
   }
   openSheet('account');
+}
+// ── 購車試算 / 車貸 ─────────────────────────────────────────
+function carPmt(P, annualPct, years){
+  const r=(annualPct/100)/12, n=years*12;
+  if(P<=0) return 0;
+  if(r===0) return P/n;
+  return P*r*Math.pow(1+r,n)/(Math.pow(1+r,n)-1);
+}
+function openCarSheet(){
+  const c=db.carPlan||{};
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el&&v!=null&&v!=='') el.value=v; };
+  set('car-price',c.price); set('car-down',c.down); set('car-rate',c.rate);
+  set('car-years',c.years); set('car-hold',c.hold); set('car-yield',c.yield);
+  set('car-saved',c.saved); set('car-save',c.save);
+  // 預設把「每月可存」帶入目前可動用現金的概念（留空才帶）
+  carCalc();
+}
+function carCalc(){
+  const num=id=>parseFloat((document.getElementById(id)||{}).value)||0;
+  const price=num('car-price'), down=num('car-down'), rate=num('car-rate');
+  const years=parseInt((document.getElementById('car-years')||{}).value)||7;
+  const hold=num('car-hold'), dy=num('car-yield');
+  const loan=Math.max(0, price-down);
+  const m=carPmt(loan, rate, years);
+  const n=years*12;
+  const totalInterest=m*n-loan;
+  const totalCost=price+totalInterest+hold*n;
+  const monthlyBurden=m+hold;
+  const out=document.getElementById('car-out');
+  if(out) out.innerHTML=
+    '<div style="background:var(--bg3,#334155);border-radius:12px;padding:12px;">'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;"><span style="color:var(--muted,#94a3b8);">貸款金額</span><span class="mono" style="font-weight:600;">$'+Math.round(loan).toLocaleString()+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;"><span style="color:var(--muted,#94a3b8);">每月還款（本利）</span><span class="mono" style="font-weight:700;color:var(--red,#f87171);">$'+Math.round(m).toLocaleString()+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;"><span style="color:var(--muted,#94a3b8);">＋每月持有成本</span><span class="mono">$'+Math.round(hold).toLocaleString()+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid rgba(255,255,255,.08);margin-top:4px;"><span style="font-weight:600;">每月總負擔</span><span class="mono" style="font-weight:700;color:#fbbf24;font-size:16px;">$'+Math.round(monthlyBurden).toLocaleString()+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;"><span style="color:var(--muted,#94a3b8);">總利息（'+years+'年）</span><span class="mono">$'+Math.round(totalInterest).toLocaleString()+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;padding:3px 0;"><span style="color:var(--muted,#94a3b8);">車總成本（車價+利息+持有）</span><span class="mono">$'+Math.round(totalCost).toLocaleString()+'</span></div>'
+    +'</div>';
+  // 高股息配息覆蓋
+  const annualPay=m*12;
+  const annualInt=loan*(rate/100); // 首年利息概估
+  const divOut=document.getElementById('car-div-out');
+  if(divOut){
+    if(dy>0 && loan>0){
+      const needFull=annualPay/(dy/100);
+      const needInt=annualInt/(dy/100);
+      divOut.innerHTML=
+        '要用配息蓋<b>全部本利</b>（年繳 $'+Math.round(annualPay).toLocaleString()+'）→ 需高股息本金 <b style="color:var(--text);">$'+Math.round(needFull).toLocaleString()+'</b><br>'
+        +'只蓋<b>利息</b>（首年約 $'+Math.round(annualInt).toLocaleString()+'）→ 需本金 <b style="color:var(--text);">$'+Math.round(needInt).toLocaleString()+'</b><br>'
+        +'<span style="color:#fbbf24;">⚠️ 配息要繳稅、單筆≥2萬扣2.11%補充保費；殖利率越高資本成長通常越低。</span>';
+    } else divOut.innerHTML='（填入貸款與殖利率即可試算）';
+  }
+  // 購車基金
+  const saved=num('car-saved'), save=num('car-save');
+  const target=down>0?down:price; // 有頭期就以頭期為目標，否則以全額
+  const gap=Math.max(0, target-saved);
+  const fundOut=document.getElementById('car-fund-out');
+  if(fundOut){
+    if(save>0){
+      const mo=Math.ceil(gap/save);
+      const yr=(mo/12);
+      fundOut.innerHTML='目標（'+(down>0?'頭期':'全額付現')+'）$'+Math.round(target).toLocaleString()
+        +'，已存 $'+Math.round(saved).toLocaleString()+'，還差 $'+Math.round(gap).toLocaleString()+'<br>'
+        +'每月存 $'+Math.round(save).toLocaleString()+' → 還要 <b style="color:var(--text);">'+mo+' 個月（約 '+yr.toFixed(1)+' 年）</b>';
+    } else fundOut.innerHTML='（填入每月可存金額即可估算）';
+  }
+}
+function saveCarPlan(){
+  const num=id=>parseFloat((document.getElementById(id)||{}).value)||0;
+  db.carPlan={ price:num('car-price'), down:num('car-down'), rate:num('car-rate'),
+    years:parseInt((document.getElementById('car-years')||{}).value)||7,
+    hold:num('car-hold'), yield:num('car-yield'), saved:num('car-saved'), save:num('car-save') };
+  saveData();
+  toast('✅ 已儲存購車試算設定');
 }
 function saveAccount(){
   const id=document.getElementById('acc-id').value;
