@@ -5140,12 +5140,14 @@ function importCcData() {
   let msg = (clearedCount>0 ? ('🧹 清除舊 '+clearedCount+' 筆 · ') : '') + '✅ 匯入支出 '+added+' 筆 $'+Math.round(totalAmt).toLocaleString();
   if(incAdded>0) msg += '、收入 '+incAdded+' 筆 $'+Math.round(totalInc).toLocaleString();
   if(tfAdded>0) msg += '、互轉 '+tfAdded+' 筆(不計)';
+  if(ccIsRichart && _richartCardLatest) msg += '\n💳 信用卡明細最新到 '+_richartCardLatest+'（之後的刷卡可能尚未入帳，下次匯入會補上）';
   toast(msg);
   ccIsRichart = false;
 }
 
 // ── 台新 Richart .xls 直接匯入（結構化，不需 AI）──────────────
 let ccIsRichart = false;
+let _richartCardLatest = null;  // 信用卡明細最新消費日期（提醒使用者資料截止）
 let _richartBalance = null;
 let _richartAllItems = [];   // 完整解析結果（供起始月份篩選用）
 // 建立「起始月份」選單：列出檔案裡的所有月份，預設近 3 個月（排除太舊的）
@@ -5153,8 +5155,9 @@ function setupRichartMonthFilter(){
   const sel=document.getElementById('richart-month'); if(!sel) return;
   const months=[...new Set(_richartAllItems.map(it=>String(it.date||'').slice(0,7)).filter(m=>/^\d{4}-\d{2}$/.test(m)))].sort().reverse();
   if(!months.length){ document.getElementById('richart-month-row').style.display='none'; return; }
-  // 預設起始月份 = 最新月（只匯入最近一個月，避免又匯到很舊的月份）
-  const def = months[0];
+  // 預設起始月份 = 上個月（含上月+本月），因為常在月中(20號薪水日)匯入，
+  // 要把上個月 21~月底那段補進來；重疊部分會自動去重
+  const def = months[1] || months[0];
   sel.innerHTML = months.map(m=>'<option value="'+m+'"'+(m===def?' selected':'')+'>'+m+' 起（含）</option>').join('')
     + '<option value="">全部（不限）</option>';
   document.getElementById('richart-month-row').style.display='flex';
@@ -5177,7 +5180,7 @@ function richartIncomeSource(sum,note){ const t=String(sum)+String(note); if(/AP
 function selectAccountByName(selId,re){ const sel=document.getElementById(selId); if(!sel) return; for(const opt of sel.options){ if(re.test(opt.textContent)){ sel.value=opt.value; return; } } }
 
 function parseRichartWorkbook(wb){
-  const items=[]; _richartBalance=null;
+  const items=[]; _richartBalance=null; _richartCardLatest=null;
   wb.SheetNames.forEach(name=>{
     const rows=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:false,defval:''});
     if(!rows || rows.length<2) return;
@@ -5189,8 +5192,9 @@ function parseRichartWorkbook(wb){
       for(let r=1;r<rows.length;r++){ const row=rows[r]; if(!row) continue;
         const dt=String(row[cD]||'').trim(), amt=parseTwMoney(row[cA]), desc=String(row[cM]||'').trim();
         if(!dt||!desc||!amt) continue;
+        const nd=normDate(dt); if(!_richartCardLatest || nd>_richartCardLatest) _richartCardLatest=nd; // 信用卡明細最新消費日期
         if(amt>0) continue; // 正數(退款)先略過
-        items.push({kind:'expense',date:normDate(dt),merchant:cleanMerchant(desc),amount:Math.abs(amt),category:mapRichartCat(row[cC]),paymentMethod:'台新Richart'});
+        items.push({kind:'expense',date:nd,merchant:cleanMerchant(desc),amount:Math.abs(amt),category:mapRichartCat(row[cC]),paymentMethod:'台新Richart'});
       }
     } else if(head.includes('摘要')){
       // 帳戶明細 → 刷卡消費(支出) + 薪資/利息/回饋/租金(收入)；跳過轉帳/ATM/卡費
