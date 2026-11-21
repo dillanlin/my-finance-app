@@ -5194,7 +5194,7 @@ function parseRichartWorkbook(wb){
       }
     } else if(head.includes('摘要')){
       // 帳戶明細 → 刷卡消費(支出) + 薪資/利息/回饋/租金(收入)；跳過轉帳/ATM/卡費
-      const cD=col('交易日期'), cA=col('金額'), cS=col('摘要'), cN=col('備註'), cB=col('帳戶餘額'), cT=col('轉帳說明'), cMemo=col('備忘錄');
+      const cD=col('交易日期','入帳日期','帳務日期'), cA=col('金額'), cS=col('摘要'), cN=col('備註'), cB=col('帳戶餘額'), cT=col('轉帳說明'), cMemo=col('備忘錄');
       for(let r=1;r<rows.length;r++){ const row=rows[r]; if(!row) continue;
         const dt=String(row[cD]||'').trim(), amt=parseTwMoney(row[cA]), sum=String(row[cS]||'').trim(), note=String(row[cN]||'').trim();
         // 台新「摘要」多是「轉帳存入/媒體轉帳」等通用字，真正身份在備註/備忘錄/轉帳說明（如「八月租屋補助」在備忘錄）
