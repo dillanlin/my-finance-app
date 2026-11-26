@@ -872,6 +872,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <label style="font-size:12px;color:var(--muted,#94a3b8);white-space:nowrap;">只匯入此月起</label>
         <select id="richart-month" onchange="applyRichartMonthFilter()" style="flex:1;background:var(--bg,#0f172a);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;color:var(--text,#f1f5f9);font-size:13px;"></select>
       </div>
+      <label id="cc-skipdup-row" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted,#94a3b8);margin-bottom:8px;flex-shrink:0;cursor:pointer;background:var(--bg3,#334155);border-radius:10px;padding:8px 10px;">
+        <input type="checkbox" id="cc-skipdup-check" checked onchange="ccToggleSkipDup(this.checked)" style="width:16px;height:16px;"> <span>🔁 自動略過已匯入的重複明細（同日期、同金額、同店家）</span>
+      </label>
       <div id="cc-result-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:4px;padding-bottom:8px;"></div>
       <label id="cc-clear-old" style="display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted,#94a3b8);margin-top:8px;flex-shrink:0;cursor:pointer;">
         <input type="checkbox" id="cc-clear-check" style="width:16px;height:16px;"> <span>⚠️ 匯入前先清除<b>所有</b>舊台新明細（會刪掉之前月份，通常不需要——已自動去重複）</span>
@@ -4611,6 +4614,8 @@ function openCcOcrSheet() {
   _richartAllItems = [];
   const clr = document.getElementById('cc-clear-old'); if(clr) clr.style.display = 'none';
   const mr = document.getElementById('richart-month-row'); if(mr) mr.style.display = 'none';
+  const sd = document.getElementById('cc-skipdup-row'); if(sd) sd.style.display = 'none';
+  ccSkipDup = true; const sdc = document.getElementById('cc-skipdup-check'); if(sdc) sdc.checked = true;
 }
 
 async function handleCcUpload(input) {
@@ -4950,6 +4955,8 @@ async function callGeminiCcOcr(base64, mediaType, cardName, fileName, ym) {
   return items.map(it => ({...it, _cardName: cardName}));
 }
 
+let ccSkipDup = true; // 預設：自動略過精確重複（同日期同金額同店家）
+function ccToggleSkipDup(on){ ccSkipDup = !!on; renderCcResults(); }
 function renderCcResults() {
   const list = document.getElementById('cc-result-list');
   const summary = document.getElementById('cc-summary');
@@ -4963,18 +4970,22 @@ function renderCcResults() {
   // Sort by date desc
   ccParsedItems.sort((a,b) => (b.date||'').localeCompare(a.date||''));
 
-  const expItems = ccParsedItems.filter(it => it.kind !== 'income' && it.kind !== 'transfer');
-  const incItems = ccParsedItems.filter(it => it.kind === 'income');
-  const tfItems = ccParsedItems.filter(it => it.kind === 'transfer');
+  const hidden = it => ccSkipDup && it._exactDup;   // 預設略過的精確重複
+  const skippedDup = ccParsedItems.filter(hidden).length;
+  const expItems = ccParsedItems.filter(it => it.kind !== 'income' && it.kind !== 'transfer' && !hidden(it));
+  const incItems = ccParsedItems.filter(it => it.kind === 'income' && !hidden(it));
+  const tfItems = ccParsedItems.filter(it => it.kind === 'transfer' && !hidden(it));
   const expTot = expItems.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
   const incTot = incItems.reduce((s,it)=>s+(parseFloat(it.amount)||0),0);
-  const possibleDups = ccParsedItems.filter(it => it._possibleDup).length;
+  const possibleDups = ccParsedItems.filter(it => it._possibleDup && !it._exactDup && !hidden(it)).length;
   summary.innerHTML = '支出 '+expItems.length+' 筆 $'+Math.round(expTot).toLocaleString()
     + (incItems.length ? ' · <span style="color:#34d399;">收入 '+incItems.length+' 筆 $'+Math.round(incTot).toLocaleString()+'</span>' : '')
     + (tfItems.length ? ' · <span style="color:#94a3b8;">🔄 互轉 '+tfItems.length+' 筆(不計)</span>' : '')
+    + (skippedDup>0 ? ' · <span style="color:#60a5fa;">🔁 已略過 '+skippedDup+' 筆重複</span>' : '')
     + (possibleDups>0 ? ' · <span style="color:#fbbf24;">⚠️ '+possibleDups+' 疑似重複</span>' : '');
 
   list.innerHTML = ccParsedItems.map((it, i) => {
+    if(hidden(it)) return '';   // 預設略過的精確重複不顯示
     const isInc = it.kind === 'income';
     const isTf = it.kind === 'transfer';
     const dupWarning = it._possibleDup
@@ -5095,10 +5106,11 @@ function importCcData() {
   const keys = new Set(db.expenses.map(e => ccKey(e.date, e.amount, e.note)));
   const incKeys = new Set(db.incomes.map(i => i.date+'|'+Math.abs(i.amount)));
 
-  let tfAdded = 0;
+  let tfAdded = 0, skippedDupN = 0;
   ccParsedItems.forEach(it => {
     const amt = parseFloat(it.amount) || 0;
     if(amt === 0 || !it.date) return;
+    if(ccSkipDup && it._exactDup){ skippedDupN++; return; }   // 預設略過精確重複
     if(it.kind === 'transfer'){
       db.transfers = db.transfers || [];
       db.transfers.push({ id: Date.now()+Math.random(), date: it.date, from: accId, to: null, amount: Math.abs(amt), note: (it.merchant||'跨行轉出')+'（帳戶互轉）', _reclassified: true });
@@ -5140,6 +5152,7 @@ function importCcData() {
   let msg = (clearedCount>0 ? ('🧹 清除舊 '+clearedCount+' 筆 · ') : '') + '✅ 匯入支出 '+added+' 筆 $'+Math.round(totalAmt).toLocaleString();
   if(incAdded>0) msg += '、收入 '+incAdded+' 筆 $'+Math.round(totalInc).toLocaleString();
   if(tfAdded>0) msg += '、互轉 '+tfAdded+' 筆(不計)';
+  if(skippedDupN>0) msg += '、🔁 略過重複 '+skippedDupN+' 筆';
   if(ccIsRichart && _richartCardLatest) msg += '\n💳 信用卡明細最新到 '+_richartCardLatest+'（之後的刷卡可能尚未入帳，下次匯入會補上）';
   toast(msg);
   ccIsRichart = false;
@@ -5295,6 +5308,9 @@ function finalizeCcItems(allItems){
       for(let o=-1;o<=1&&!dup;o++){ const cd=new Date(dateObj); cd.setDate(cd.getDate()+o); const ds=cd.toISOString().split('T')[0];
         if(it.kind==='income'){ if(existingInc.some(e=>e.amt===amt&&e.date===ds)) dup=true; }
         else { if(existing.some(e=>e.amt===amt&&e.date===ds&&(!e.m||!m||e.m===m||e.m.includes(m)||m.includes(e.m)))) dup=true; } }
+      // 精確重複（同日期、同金額、同店家）→ 預設自動略過，不誤刪相似的不同筆
+      if(it.kind==='income'){ if(existingInc.some(e=>e.amt===amt&&e.date===it.date)) it._exactDup=true; }
+      else { if(existing.some(e=>e.amt===amt&&e.date===it.date&&e.m===m)) it._exactDup=true; }
     }
     if(dup) it._possibleDup=true;
     ccParsedItems.push(it);
@@ -5302,6 +5318,7 @@ function finalizeCcItems(allItems){
   document.getElementById('cc-loading').style.display='none';
   document.getElementById('cc-results').style.display='flex';
   const clr=document.getElementById('cc-clear-old'); if(clr) clr.style.display = ccIsRichart?'flex':'none';
+  const sd=document.getElementById('cc-skipdup-row'); if(sd) sd.style.display='flex';
   renderCcResults();
 }
 
