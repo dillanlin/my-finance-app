@@ -840,6 +840,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div><!-- /cc-mode-shot -->
 
       <div id="cc-mode-file" style="display:none;">
+      <div id="import-sop-card" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(8,145,178,.12));border:1px solid rgba(16,185,129,.3);border-radius:14px;padding:12px 14px;margin-bottom:12px;position:relative;">
+        <button onclick="dismissImportSop()" title="不再顯示" style="position:absolute;top:8px;right:10px;background:none;border:none;color:var(--muted,#94a3b8);font-size:14px;cursor:pointer;">✕</button>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px;">📋 每月匯入 SOP</div>
+        <div style="font-size:12px;color:var(--muted,#94a3b8);line-height:1.8;">
+          <b style="color:#10b981;">1.</b> 台新 App 匯出 Richart 交易明細（.xls）<br>
+          <b style="color:#10b981;">2.</b> 下面選檔匯入 → 月份<b>維持預設（上月起）</b>、<b>不用勾清除</b><br>
+          <b style="color:#10b981;">3.</b> 重複的會<b>自動略過</b>，收入/跨行轉帳會列出來讓你確認<br>
+          <b style="color:#10b981;">4.</b> 看一下提示「💳 信用卡明細最新到 X 號」<br>
+          <span style="color:rgba(148,163,184,.75);">※ 最近幾天剛刷的卡可能還沒入帳，下次匯入會自動補上</span>
+        </div>
+      </div>
       <label for="rec-import-file"
         style="display:block;border:2px dashed rgba(16,185,129,.45);border-radius:14px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;position:relative;">
         <i class="fa-solid fa-file-import" style="font-size:28px;color:#10b981;margin-bottom:8px;display:block;"></i>
@@ -4587,11 +4598,17 @@ function openImport(mode){
   ccImportMode = (mode==='file') ? 'file' : 'shot';
   openSheet('cc-ocr');
 }
+function dismissImportSop(){
+  try{ localStorage.setItem('importSopDismissed','1'); }catch(e){}
+  const sop=document.getElementById('import-sop-card'); if(sop) sop.style.display='none';
+}
 function openCcOcrSheet() {
   // 依 ccImportMode 顯示對應區塊 + 標題
   const isFile = (ccImportMode==='file');
   const shotEl = document.getElementById('cc-mode-shot'); if(shotEl) shotEl.style.display = isFile ? 'none' : 'block';
   const fileEl = document.getElementById('cc-mode-file'); if(fileEl) fileEl.style.display = isFile ? 'block' : 'none';
+  const sop = document.getElementById('import-sop-card');
+  if(sop){ let dismissed=false; try{ dismissed=localStorage.getItem('importSopDismissed')==='1'; }catch(e){} sop.style.display = (isFile && !dismissed) ? 'block' : 'none'; }
   const titleEl = document.getElementById('cc-sheet-title'); if(titleEl) titleEl.textContent = isFile ? '📥 匯入檔案（台新 .xls / CSV / Excel / Numbers）' : '📸 匯入截圖（AI 自動判讀）';
   // Populate accounts
   const sel = document.getElementById('cc-account');
