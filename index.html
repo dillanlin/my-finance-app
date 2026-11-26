@@ -247,6 +247,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <button class="btn btn-ghost btn-sm" id="refresh-btn" onclick="fetchAllPrices()">
           <i class="fa-solid fa-arrows-rotate" id="refresh-icon"></i> 更新現價
         </button>
+        <button class="btn btn-ghost btn-sm" id="div-sync-btn" onclick="syncDividends()" style="margin-left:6px;">
+          <i class="fa-solid fa-coins" id="div-sync-icon"></i> 更新配息
+        </button>
       </div>
 
       <!-- Holdings -->
@@ -1644,21 +1647,9 @@ function sharesHeldAsOf(sym, dateStr){
   return db.stock.filter(s=>s.symbol===sym && (!s.date || s.date<=dateStr)).reduce((a,s)=>a+s.shares,0);
 }
 
-// 從 FinMind 抓現金股利，依除息日當天持股數估算金額，預覽後再入帳
-async function autoFetchDividends(){
-  const fr=document.getElementById('div-fetch-result');
-  if(!db.finmindToken){
-    fr.style.display='block';
-    fr.innerHTML='<div style="padding:10px 12px;background:rgba(248,113,113,.1);border-radius:10px;font-size:12px;color:var(--red,#f87171);">⚠️ 自動抓配息需要 FinMind Token，請先到「設定」頁面設定。</div>';
-    return;
-  }
-  const syms=[...new Set(db.stock.map(s=>s.symbol))];
-  if(!syms.length) return toast('沒有持股');
-  const btn=document.getElementById('div-fetch-btn');
-  if(btn) btn.disabled=true;
-  fr.style.display='block';
-  fr.innerHTML='<div style="padding:10px;text-align:center;font-size:13px;color:var(--muted,#94a3b8);">🔄 從 FinMind 抓取配息中...</div>';
-
+// 核心：從 FinMind 抓現金股利，依除息日持股估算金額，回傳尚未記錄的清單
+async function fetchDividendsCore(){
+  const syms=[...new Set((db.stock||[]).map(s=>s.symbol))];
   const start=(new Date().getFullYear()-2)+'-01-01';
   let found=[], errors=[];
   for(const sym of syms){
@@ -1678,10 +1669,49 @@ async function autoFetchDividends(){
       } else if(data.msg){ errors.push(sym+': '+data.msg); }
     }catch(e){ errors.push(sym+': '+e.message); }
   }
-  // 排除已記錄過的（同股票 + 同除息日）
   const existing=new Set((db.dividends||[]).map(d=>d.symbol+'|'+d.date));
   found=found.filter(f=> f.amount>0 && !existing.has(f.symbol+'|'+f.date));
   found.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  return {found, errors};
+}
+// 一鍵：抓配息並「直接入帳」到交割戶（不需預覽），供存股頁「更新配息」用
+async function syncDividends(){
+  if(!db.finmindToken){ toast('⚠️ 自動抓配息需要 FinMind Token，請到「設定」頁設定（免費）'); return; }
+  if(!db.stock || !db.stock.length){ toast('目前沒有持股'); return; }
+  const btn=document.getElementById('div-sync-btn');
+  const icon=document.getElementById('div-sync-icon');
+  if(btn) btn.disabled=true; if(icon) icon.classList.add('fa-spin');
+  toast('🔄 從 FinMind 抓取配息中...');
+  let res; try{ res=await fetchDividendsCore(); }catch(e){ res={found:[],errors:[e.message]}; }
+  if(btn) btn.disabled=false; if(icon) icon.classList.remove('fa-spin');
+  const {found, errors}=res;
+  if(!found.length){
+    toast(errors.length ? ('⚠️ 查無新配息（'+errors.slice(0,2).join('；')+'）') : '✅ 配息已是最新，無新增');
+    return;
+  }
+  const acc=db.assets.find(a=>a.isDelivery) || db.assets.find(a=>a.id===2) || db.assets[0];
+  const accId=acc?acc.id:null;
+  let n=0, tot=0;
+  found.forEach(f=>{ recordDividend(f.symbol, f.date, f.amount, accId); n++; tot+=f.amount; });
+  saveData(); updateUI();
+  if(typeof renderDividendList==='function') renderDividendList();
+  toast('✅ 已自動入帳 '+n+' 筆配息，共 $'+Math.round(tot).toLocaleString()+(acc?('（入「'+acc.name+'」）'):'')+'\n可在「記錄配息」檢視或刪除');
+}
+
+// 從 FinMind 抓現金股利，依除息日當天持股數估算金額，預覽後再入帳
+async function autoFetchDividends(){
+  const fr=document.getElementById('div-fetch-result');
+  if(!db.finmindToken){
+    fr.style.display='block';
+    fr.innerHTML='<div style="padding:10px 12px;background:rgba(248,113,113,.1);border-radius:10px;font-size:12px;color:var(--red,#f87171);">⚠️ 自動抓配息需要 FinMind Token，請先到「設定」頁面設定。</div>';
+    return;
+  }
+  if(!db.stock || !db.stock.length) return toast('沒有持股');
+  const btn=document.getElementById('div-fetch-btn');
+  if(btn) btn.disabled=true;
+  fr.style.display='block';
+  fr.innerHTML='<div style="padding:10px;text-align:center;font-size:13px;color:var(--muted,#94a3b8);">🔄 從 FinMind 抓取配息中...</div>';
+  const {found, errors}=await fetchDividendsCore();
   divFetched=found;
   if(btn) btn.disabled=false;
   renderDivFetchResult(errors);
